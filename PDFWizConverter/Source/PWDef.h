@@ -1,35 +1,59 @@
 ﻿#pragma once
 
 #include <NXProperty.h>
+#include <QSize>
 #include <variant>
+#include <absl/container/flat_hash_map>
 namespace WizConverter::Module {
     namespace Enums {
-        enum class FileType : int8_t {
-            CAD,
-            CAJ,
-            EPUB,
-            EXCEL,
-            HTML,
-            IMAGE,
-            MARKDOWN,
-            OFD,
-            PDF,
-            POWERPOINT,
-            TXT,
-            WORD,
-            __END
+        struct FileFormat {
+            enum class Type : int8_t {
+                CAD,
+                CAJ,
+                EPUB,
+                EXCEL,
+                HTML,
+                IMAGE,
+                MARKDOWN,
+                OFD,
+                PDF,
+                POWERPOINT,
+                TXT,
+                WORD,
+                __END
+            };
+            static Type GetFileTypeByExtension(const QString& extension) {
+                static const absl::flat_hash_map<QString, Type> fileTypes{
+                    { "dwg", Type::CAD }, { "dxf", Type::CAD },
+                    { "caj", Type::CAJ }, { "epub", Type::EPUB },
+                    { "xlsx", Type::EXCEL }, { "xls", Type::EXCEL },
+                    { "csv", Type::EXCEL }, { "html", Type::HTML },
+                    { "htm", Type::HTML }, { "jpg", Type::IMAGE },
+                    { "jpeg", Type::IMAGE }, { "png", Type::IMAGE },
+                    { "bmp", Type::IMAGE }, { "tif", Type::IMAGE },
+                    { "tiff", Type::IMAGE }, { "gif", Type::IMAGE },
+                    { "svg", Type::IMAGE }, { "md", Type::MARKDOWN },
+                    { "ofd", Type::OFD }, { "pdf", Type::PDF },
+                    { "pptx", Type::POWERPOINT }, { "ppt", Type::POWERPOINT },
+                    { "txt", Type::TXT }, { "docx", Type::WORD },
+                    { "doc", Type::WORD }, { "rtf", Type::WORD },
+                };
+                const auto it = fileTypes.find(extension.toLower());
+                return it != fileTypes.end() ? (*it).second : Type::__END;
+            }
         };
-        enum class FileState : int8_t {
-            LOADING = 0,
-            SUCCESS,
-            FAILED,
-            CORRUPTION,
-            DELETED,
-            BEREADY,
-            PROCESSING,
-            UNKONWERROR
+        struct FileState {
+            enum class Type : int8_t {
+                LOADING = 0,
+                BEREADY,
+                PROCESSING,
+                SUCCESS,
+                FAILED,
+                CORRUPTION,
+                DELETED,
+                UNKONWERROR
+            };
         };
-
         struct MasterModule {
             enum class Type {
                 PDFToWord,
@@ -39,7 +63,7 @@ namespace WizConverter::Module {
             };
         };
 
-        struct SlaveModule {};
+        struct SlaveModule { enum class Type {}; };
 
         struct PDFToWord : public SlaveModule {
             enum class Type {
@@ -54,6 +78,7 @@ namespace WizConverter::Module {
                 PDFToMarkdown
             };
         };
+        Q_DECLARE_METATYPE(PDFToWord::Type)
 
         struct WordToPDF : public SlaveModule {
             enum class Type {
@@ -68,6 +93,7 @@ namespace WizConverter::Module {
                 MarkdownToPDF
             };
         };
+        Q_DECLARE_METATYPE(WordToPDF::Type)
 
         struct PDFAction : public SlaveModule {
             enum class Type {
@@ -82,6 +108,7 @@ namespace WizConverter::Module {
                 DocumentTranslate
             };
         };
+        Q_DECLARE_METATYPE(PDFAction::Type)
 
         struct ImageAction : public SlaveModule {
             enum class Type {
@@ -95,6 +122,12 @@ namespace WizConverter::Module {
                 ImageRotateCropFlip,
                 ImageAdvancedManipulation,
             };
+        };
+        Q_DECLARE_METATYPE(ImageAction::Type)
+
+        struct ModuleType {
+            MasterModule::Type MasterModuleType;
+            QVariant SlaveModuleType;
         };
 
         template<typename T>
@@ -199,3 +232,9 @@ namespace WizConverter::Module {
         }
     }
 }
+
+using FileStateType = WizConverter::Module::Enums::FileState::Type;
+using FileFormatType = WizConverter::Module::Enums::FileFormat::Type;
+
+#define TABLE_VIEW_CHECKICON_ADJUST 16, 5, 11, -1
+constexpr QSize TABLE_VIEW_CHECKICON_SIZE{ 24, 24 };

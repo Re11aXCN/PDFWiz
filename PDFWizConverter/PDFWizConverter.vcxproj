@@ -106,7 +106,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;`$(WindowsSDK_IncludePath);E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;$(WindowsSDK_IncludePath);$(VCPKG_INS_PACKAGE_DIR)\include;$(BOOST_INS_PACKAGE_DIR)\include;E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <OpenMPSupport>true</OpenMPSupport>
       <StringPooling>true</StringPooling>
@@ -136,8 +136,8 @@
       <QtUicDir>.\GeneratedFiles</QtUicDir>
     </QtUic>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>nexusd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;$(BOOST_INS_PACKAGE_DIR)\lib;$(VCPKG_INS_PACKAGE_DIR)\debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nexusd.lib;;abseil_dll.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -153,7 +153,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;`$(WindowsSDK_IncludePath);E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;$(WindowsSDK_IncludePath);$(VCPKG_INS_PACKAGE_DIR)\include;$(BOOST_INS_PACKAGE_DIR)\include;E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <StringPooling>true</StringPooling>
@@ -185,14 +185,14 @@
       <QtUicDir>.\GeneratedFiles</QtUicDir>
     </QtUic>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>nexus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;$(BOOST_INS_PACKAGE_DIR)\lib;$(VCPKG_INS_PACKAGE_DIR)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nexus.lib;abseil_dll.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;`$(WindowsSDK_IncludePath);E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)UI;$(ProjectDir)Source;$(ProjectDir)Source\include;$(WindowsSDK_IncludePath);$(VCPKG_INS_PACKAGE_DIR)\include;$(BOOST_INS_PACKAGE_DIR)\include;E:\Project\Code\NexUs\NexUs\Source\include</AdditionalIncludeDirectories>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <StringPooling>true</StringPooling>
@@ -224,8 +224,8 @@
       <QtUicDir>.\GeneratedFiles</QtUicDir>
     </QtUic>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>nexus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)Bin\$(SolutionName)_$(Configuration)_$(Platform)\;$(BOOST_INS_PACKAGE_DIR)\lib;$(VCPKG_INS_PACKAGE_DIR)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nexus.lib;abseil_dll.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
@@ -276,7 +276,7 @@
     <ClCompile Include="UI\Component\PWComboBox.cpp" />
     <ClCompile Include="UI\Component\PWHeaderView.cpp" />
     <ClCompile Include="UI\Component\PWTableMaskWidget.cpp" />
-    <ClCompile Include="UI\Component\PWFileTableWidget.cpp" />
+    <ClCompile Include="UI\PWCentralWidget.cpp" />
     <ClCompile Include="UI\Component\PWTableView.cpp" />
     <ClCompile Include="UI\Component\PWTableViewIconDelegate.cpp" />
     <ClCompile Include="UI\Component\PWTableViewModel.cpp" />
@@ -289,6 +289,7 @@
   <ItemGroup>
     <ClInclude Include="Source\ABI\abi_DocMetadata.h" />
     <ClInclude Include="Source\ABI\abi_Logger.h" />
+    <ClInclude Include="Source\absl\container\flat_hash_map" />
     <ClInclude Include="Source\PWDef.h" />
     <ClInclude Include="Source\PWDocMetadata.h" />
     <ClInclude Include="Source\PWTransmittedData.h" />
@@ -297,7 +298,7 @@
     <QtMoc Include="UI\Component\PWTableViewModel.h" />
     <QtMoc Include="UI\Component\PWTableViewIconDelegate.h" />
     <QtMoc Include="UI\Component\PWTableView.h" />
-    <QtMoc Include="UI\Component\PWFileTableWidget.h" />
+    <QtMoc Include="UI\PWCentralWidget.h" />
     <QtMoc Include="UI\Component\PWTableMaskWidget.h" />
     <QtMoc Include="UI\PWConverterWidget.h" />
     <QtMoc Include="UI\Component\PWHeaderView.h" />

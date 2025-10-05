@@ -3,26 +3,29 @@
 #include <QWidget>
 #include <NXProperty.h>
 #include "PWDef.h"
-class QTableWidget;
 class QStackedWidget;
+class PWTableView;
 class PWTableMaskWidget;
-class PWFileTableWidget : public QWidget
+class PWCentralWidget : public QWidget
 {
     Q_OBJECT
-    Q_PRIVATE_CREATE(WizConverter::Module::Enums::MasterModule, MasterModule)
-    Q_PRIVATE_CREATE(WizConverter::Module::Enums::SlaveModule, SlaveModule)
+    Q_PRIVATE_CREATE_D(WizConverter::Module::Enums::ModuleType, ModuleType)
     Q_PRIVATE_CREATE_D(QStackedWidget*, Layer)
     Q_PRIVATE_CREATE_D(PWTableMaskWidget*, TableMask)
-    Q_PRIVATE_CREATE_D(QTableWidget*, TableView)
+    Q_PRIVATE_CREATE_D(PWTableView*, TableView)
     Q_PRIVATE_CREATE_EX(const QString&, QString, FileFilter)
-    Q_PRIVATE_CREATE_EX(const QString&, QString, FileState)
+    Q_PRIVATE_CREATE_EX(const QString&, QString, FileBereadyState)
+
+    Q_PRIVATE_CREATE_Q_H(WizConverter::Module::Enums::ModuleType, ModuleType)
 public:
-    explicit PWFileTableWidget(QWidget *parent = nullptr);
-    ~PWFileTableWidget();
+    explicit PWCentralWidget(QWidget *parent = nullptr);
+    ~PWCentralWidget();
 
     void setMask(const QPixmap& pixmap);
     void addFiles(const QStringList& filePaths);
     void removeAll();
+    void removeAllSelected();
+    void removeAllNotSelected();
 protected:
     void resizeEvent(QResizeEvent* event) override;
 private Q_SLOTS:

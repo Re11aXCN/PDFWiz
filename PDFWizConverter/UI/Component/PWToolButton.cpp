@@ -17,7 +17,6 @@ PWToolButton::PWToolButton(const QString& text, const QString& imagePath
     _pButtonMetaData = metaData;
 
     setCheckable(true); 
-    setAutoExclusive(true);
     setCursor(Qt::PointingHandCursor);
     setText(text);
 
@@ -57,9 +56,12 @@ void PWToolButton::paintEvent(QPaintEvent* event)
 void PWToolButton::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
-        setChecked(!isChecked());   // 切换选中状态
-        update();                   // 更新按钮以重绘
-        Q_EMIT clicked();           // 发出点击信号
+        setChecked(!isChecked());
     }
-    QToolButton::mousePressEvent(event);
+    NXAdvancedToolButton::mousePressEvent(event);
+}
+
+void PWToolButton::mouseReleaseEvent(QMouseEvent* event)
+{
+    NXAdvancedToolButton::mouseReleaseEvent(event);
 }

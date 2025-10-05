@@ -12,8 +12,8 @@ public:
 	virtual ~PWHeaderView() override = default;
 
 Q_SIGNALS:
-	Q_SIGNAL void selectAllData();
-	Q_SIGNAL void deleteSelectedData();
+	Q_SIGNAL void selectAllRows();
+	Q_SIGNAL void removeSelectedRows();
 protected:
 	virtual void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override;
 	virtual void mouseMoveEvent(QMouseEvent* event) override;

@@ -1,5 +1,6 @@
 ﻿#include "PWConverterWidget.h"
 #include <vector>
+#include <thread>
 
 #include <QFileDialog>
 #include <QStackedWidget>
@@ -13,12 +14,15 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFile>
-#include <QThread>
+#include <QThreadPool>
+#include <QRunnable>
 
 #include <NXText.h>
+#include <NXContentDialog.h>
 #include <magic_enum/magic_enum.hpp>
+#include <absl/container/flat_hash_map>
 #include "PWLogger.h"
-#include "Component/PWFileTableWidget.h"
+#include "PWCentralWidget.h"
 
 constexpr int MAIN_WIDGET_WIDTH = 1080;
 constexpr int MAIN_WIDGET_HEIGHT = 650;
@@ -34,9 +38,10 @@ constexpr int SLAVE_MODULE_WIDGET_TABLE_AREA_HEIGHT = 335;
 static QSet<QString> sTranslateExtensions = { "doc", "docx", "rtf", "txt" };
 static QSet<QString> sImageActionExtensions = { "jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif" };
 
+using namespace WizConverter::Module::Enums;
 namespace Scope::Utils {
-    QString GetFileTypeByExtension(const QString& extension) {
-        static const QHash<QString, QString> extensionToType = {
+    static QString GetFileTypeByExtension(const QString& extension) {
+        static const absl::flat_hash_map<QString, QString> extensionToType = {
             {"doc", "word"}, {"docx", "word"}, {"rtf", "word"},
             {"xls", "excel"}, {"xlsx", "excel"},
             {"ppt", "powerpoint"}, {"pptx", "powerpoint"},
@@ -49,12 +54,12 @@ namespace Scope::Utils {
             {"html", "html"}, {"htm", "html"},
             {"md", "markdown"}
         };
-
-        return extensionToType.value(extension, "");
+        auto it = extensionToType.find(extension.toLower());
+        return it != extensionToType.end() ? it->second : QString{};
     }
 
-    QString GetExpectedFileTypeForSlave2(const QString& slaveName) {
-        static const QHash<QString, QString> slaveToFileType = {
+    static QString GetExpectedFileTypeForSlave2(const QString& slaveName) {
+        static const absl::flat_hash_map<QString, QString> slaveToFileType = {
             {"WordToPDF", "word"},
             {"ExcelToPDF", "excel"},
             {"PowerpointToPDF", "powerpoint"},
@@ -65,11 +70,11 @@ namespace Scope::Utils {
             {"HtmlToPDF", "html"},
             {"MarkdownToPDF", "markdown"}
         };
-
-        return slaveToFileType.value(slaveName, "");
+        auto it = slaveToFileType.find(slaveName);
+        return it != slaveToFileType.end() ? it->second : QString{};
     }
 
-    QSet<QString> ParseExtensionsFromFilter(const QString& filter) {
+    static QSet<QString> ParseExtensionsFromFilter(const QString& filter) {
         QSet<QString> extensions;
         QRegularExpression regex(R"(\*\.(\w+))");
         QRegularExpressionMatchIterator it = regex.globalMatch(filter);
@@ -80,18 +85,43 @@ namespace Scope::Utils {
         }
         return extensions;
     }
-    QString GetSlaveModuleName(QWidget* wrapperWidget) {
-        const QMetaObject* metaObject = wrapperWidget->metaObject();
-        int propertyCount = metaObject->propertyCount();
+    template<typename T>
+    struct PropertyNameValue {
+        QString Name;
+        T Value;
+    };
+    template<typename T, typename Widget>
+    static std::optional<PropertyNameValue<T>> GetPropertyValue(Widget widget, const QString& targetPropertyName = "") {
+        // 1. 首先检查动态属性
+        QVariant dynamicValue = widget->property(targetPropertyName.toUtf8().constData());
+        if (dynamicValue.isValid() && dynamicValue.canConvert<T>()) {
+            return std::make_optional(PropertyNameValue<T>{ targetPropertyName, dynamicValue.value<T>() });
+        }
 
-        for (int i = 0; i < propertyCount; ++i) {
-            QMetaProperty property = metaObject->property(i);
-            QVariant value = property.read(wrapperWidget);
-            if (value.canConvert<PWFileTableWidget*>()) {
-                return QString::fromUtf8(property.name());
+        // 2. 如果没有指定属性名，查找第一个可转换的属性
+        if (targetPropertyName.isEmpty()) {
+            // 先在内省属性中查找
+            const QMetaObject* metaObject = widget->metaObject();
+            int propertyCount = metaObject->propertyCount();
+            for (int i = 0; i < propertyCount; ++i) {
+                QMetaProperty property = metaObject->property(i);
+                QVariant value = property.read(widget);
+                if (value.canConvert<T>()) {
+                    return std::make_optional(PropertyNameValue<T>{ property.name(), value.value<T>() });
+                }
+            }
+
+            // 然后在动态属性中查找
+            auto dynamicNames = widget->dynamicPropertyNames();
+            for (const QByteArray& name : dynamicNames) {
+                QVariant value = widget->property(name.constData());
+                if (value.canConvert<T>()) {
+                    return std::make_optional(PropertyNameValue<T>{ QString(name), value.value<T>() });
+                }
             }
         }
-        return QString();
+
+        return std::nullopt;
     }
 }
 
@@ -103,9 +133,6 @@ PWConverterWidget::PWConverterWidget(QWidget* parent)
     setWindowTitle("");
     setFixedSize(MAIN_WIDGET_WIDTH, MAIN_WIDGET_HEIGHT);
     setWindowButtonFlags(NXAppBarType::StayTopButtonHint | NXAppBarType::MinimizeButtonHint | NXAppBarType::CloseButtonHint);
-    
-    // 初始化线程池
-    _pThreadPool = QThreadPool::globalInstance();
     
     _initUI();
 }
@@ -206,16 +233,16 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
     windowIconLabel->setScaledContents(true);
     QHBoxLayout* customAppBarLayout = new QHBoxLayout(customAppBarWidget);
     customAppBarLayout->setContentsMargins(0, 0, 0, 0);
+    customAppBarLayout->addSpacing(15);
     customAppBarLayout->addWidget(windowIconLabel);
     customAppBarLayout->addSpacing(5);
     customAppBarLayout->addWidget(windowTitleLabel);
     customAppBarLayout->addSpacing(10);
     this->appBar()->setCustomWidget(NXAppBarType::LeftArea, customAppBarWidget);
 
-    using namespace WizConverter::Module::Enums;
     const auto& masterModuleMap = EnumTraits<MasterModule>::Map;
     // 解析主模块按钮
-    for (auto masterIt = masterModuleMap.begin(); masterIt != masterModuleMap.end(); ++masterIt) {
+    for (auto masterIt = masterModuleMap.begin(); masterIt != masterModuleMap.end()-3; ++masterIt) {
         QJsonObject moduleObj = masterModuleComponent[(*masterIt).Name].toObject();
         PWToolButton* masterModuleButton = new PWToolButton(
             moduleObj["buttonText"].toString(),
@@ -228,7 +255,6 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
             addFilesButtonObj["buttonText"].toString(),
             addFilesButtonObj["buttonIcon"].toString(),
             _parseToolButtonMetaData(tableActionComponent["metadata"].toObject()), this);
-
         PWToolButton* removeFilesButton = new PWToolButton(
             removeFilesButtonObj["buttonText"].toString(),
             removeFilesButtonObj["buttonIcon"].toString(),
@@ -247,27 +273,29 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
         slaveModuleButtonAreaLayout->setContentsMargins(50, 15, 50, 15);
 
         auto lazyConstructComponentFunc = [this](MasterModule::Type masterType, auto&& slaveData, const QJsonObject& slaveBtnJsonObj) {
-            PWFileTableWidget* fileTableWidget = new PWFileTableWidget(this);
-            fileTableWidget->setFixedSize(SLAVE_MODULE_WIDGET_WIDTH, SLAVE_MODULE_WIDGET_TABLE_AREA_HEIGHT);
-            fileTableWidget->setMask(QPixmap::fromImage(QImage(slaveBtnJsonObj["tableMask"].toString())));
-            fileTableWidget->setFileFilter(slaveBtnJsonObj["fileFilter"].toString());
-            fileTableWidget->setFileState(slaveBtnJsonObj["fileState"].toString());
-            QWidget* fileTableWidgetWrapepr = new QWidget(this);
-            fileTableWidgetWrapepr->setProperty(slaveData.Name, QVariant::fromValue(fileTableWidget));
-            QVBoxLayout* fileTableWidgetLayout = new QVBoxLayout(fileTableWidgetWrapepr);
-            fileTableWidgetLayout->setAlignment(Qt::AlignCenter);
-            fileTableWidgetLayout->setSpacing(0);
-            fileTableWidgetLayout->setContentsMargins(0, 15, 0, 0);
-            fileTableWidgetLayout->addWidget(fileTableWidget);
-            fileTableWidgetLayout->addStretch();
+            PWCentralWidget* centralWidget = new PWCentralWidget(this);
+            qDebug() << "Constructing " << centralWidget;
+            centralWidget->setProperty(slaveData.Name, QVariant::fromValue(centralWidget));
+            centralWidget->setFixedSize(SLAVE_MODULE_WIDGET_WIDTH, SLAVE_MODULE_WIDGET_TABLE_AREA_HEIGHT);
+            centralWidget->setMask(QPixmap::fromImage(QImage(slaveBtnJsonObj["tableMask"].toString())));
+            centralWidget->setFileFilter(slaveBtnJsonObj["fileFilter"].toString());
+            centralWidget->setFileBereadyState(slaveBtnJsonObj["fileBereadyState"].toString());
+            centralWidget->setModuleType({ masterType, QVariant::fromValue(slaveData.Value) });
+            QWidget* centralWidgetWrapepr = new QWidget(this);
+            QVBoxLayout* centralWidgetLayout = new QVBoxLayout(centralWidgetWrapepr);
+            centralWidgetLayout->setAlignment(Qt::AlignCenter);
+            centralWidgetLayout->setSpacing(0);
+            centralWidgetLayout->setContentsMargins(0, 15, 0, 0);
+            centralWidgetLayout->addWidget(centralWidget);
+            centralWidgetLayout->addStretch();
 
             QStackedWidget* stackedWidget = _pSlaveMetadataMap[masterType].StackedWidget;
             if (QWidget* dummyWidget = stackedWidget->widget(static_cast<int>(slaveData.Value))) {
                 stackedWidget->removeWidget(dummyWidget);
                 dummyWidget->deleteLater();
             }
-            stackedWidget->insertWidget(static_cast<int>(slaveData.Value), fileTableWidgetWrapepr);
-
+            stackedWidget->insertWidget(static_cast<int>(slaveData.Value), centralWidgetWrapepr);
+            stackedWidget->setCurrentIndex(static_cast<int>(slaveData.Value));
             /*PWToolButton* selectOutputDirButton = new PWToolButton(
                 selectOutputDirButtonObj["buttonText"].toString(),
                 selectOutputDirButtonObj["buttonIcon"].toString(),
@@ -310,7 +338,7 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
                         {
                             func(masterType, slaveData, slaveBtnJsonObj);
                             // 标记该子模块已创建
-                            QMutexLocker locker(&_pSlaveModuleMutex);
+                            std::lock_guard<std::mutex> locker(_pSlaveModuleMutex);
                             _pSlaveMetadataMap[masterType].CreatedModules[static_cast<int>(slaveData.Value)] = true;
                         }, Qt::SingleShotConnection);
                     }
@@ -321,6 +349,7 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
 
         slaveModuleButtonAreaLayout->addStretch();
         slaveModuleButtonAreaLayout->addWidget(addFilesButton);
+        slaveModuleButtonAreaLayout->addSpacing(5);
         slaveModuleButtonAreaLayout->addWidget(removeFilesButton);
 
         // 初始显示第一个子模块
@@ -335,7 +364,10 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
         slaveModuleLayout->insertWidget(1, _pSlaveMetadataMap[(*masterIt).Value].StackedWidget);// 除了<MasterModuleButton区域+SlaveModuleButton区域>的区域
         _pMasterStackedWidget->insertWidget(static_cast<int>((*masterIt).Value), slaveModuleWidget); // 除了<MasterModuleButton区域>的区域
         
-        QObject::connect(addFilesButton, &QToolButton::released, this, [type = (*masterIt).Value, this]() {
+        QObject::connect(_pSlaveMetadataMap[(*masterIt).Value].ButtonGroup, &QButtonGroup::idReleased, this, [this, masterType = (*masterIt).Value](int id) {
+            _pSlaveMetadataMap[masterType].StackedWidget->setCurrentIndex(id);
+            });
+        QObject::connect(addFilesButton, &QToolButton::released, this, [type = (*masterIt).Value, this, addFilesButton]() {
                 this->_handleAddFiles(type);
             });
         QObject::connect(removeFilesButton, &QToolButton::released, this, [type = (*masterIt).Value, this]() {
@@ -412,7 +444,7 @@ QHash<PWToolButton::MetaData::State, QColor> PWConverterWidget::_parseToolButton
         textColor[PWToolButton::MetaData::Pressed] = QColor(textColorObj["pressed"].toString());
     }
     if (textColorObj.contains("unavailable")) {
-        QString colorStr = textColorObj["unavailable"].toString();
+        const QString& colorStr = textColorObj["unavailable"].toString();
         if (!colorStr.isEmpty()) {
             textColor[PWToolButton::MetaData::Unavailable] = QColor(colorStr);
         }
@@ -438,21 +470,57 @@ void PWConverterWidget::_handleRemoveFiles(WizConverter::Module::Enums::MasterMo
 {
     auto& slaveMetadata = _pSlaveMetadataMap[masterType];
     QStackedWidget* stackedWidget = slaveMetadata.StackedWidget;
-
     if (!stackedWidget) return;
 
-    for (int i = 0; i < stackedWidget->count(); ++i) {
-        QWidget* wrapperWidget = stackedWidget->widget(i);
-        if (!wrapperWidget) continue;
+    enum class RemoveType { All, AllSelected, AllNotSelected };
+    auto removeFilesFunc = [](QStackedWidget* moduleStackedWidget, RemoveType removeType) static {
+        for (int i = 0; i < moduleStackedWidget->count(); ++i) {
+            QWidget* wrapperWidget = moduleStackedWidget->widget(i);
+            if (!wrapperWidget) continue;
+            PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
+            if (!tableWidget) continue;
 
-        QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-        if (slaveName.isEmpty()) continue;
-
-        PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
-        if (tableWidget) {
-            tableWidget->removeAll();
+            if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+                tableWidgetPtr.has_value())
+            {
+                switch (removeType) {
+                case RemoveType::All: tableWidgetPtr.value().Value->removeAll(); break;
+                case RemoveType::AllSelected: tableWidgetPtr.value().Value->removeAllSelected(); break;
+                case RemoveType::AllNotSelected: tableWidgetPtr.value().Value->removeAllNotSelected(); break;
+                }
+            }
         }
-    }
+        };
+
+    NXContentDialog removeFilesDialog(this);
+    QWidget contentWidget(this);
+    QVBoxLayout contentVLayout(&contentWidget);
+    contentVLayout.setContentsMargins(15, 0, 15, 10);
+    NXText title("清除方式", this);
+    title.setTextStyle(NXTextType::TitleLarge);
+    NXText subTitle("请选择清除方式, 关闭窗口退出", this);
+    subTitle.setTextStyle(NXTextType::Subtitle);
+    contentVLayout.addWidget(&title);
+    contentVLayout.addSpacing(2);
+    contentVLayout.addWidget(&subTitle);
+    contentVLayout.addStretch();
+    removeFilesDialog.appBar()->setAppBarHeight(40);
+    removeFilesDialog.appBar()->setWindowButtonFlags(NXAppBarType::CloseButtonHint);
+    removeFilesDialog.setCentralWidget(&contentWidget);
+    removeFilesDialog.setLeftButtonText("清除所有已选");
+    removeFilesDialog.setMiddleButtonText("清除所有未选");
+    removeFilesDialog.setRightButtonText("清除所有");
+    QObject::connect(&removeFilesDialog, &NXContentDialog::leftButtonClicked, this, [&]() {
+        removeFilesFunc(stackedWidget, RemoveType::AllSelected);
+        });
+    QObject::connect(&removeFilesDialog, &NXContentDialog::middleButtonClicked, this, [&]() {
+        removeFilesFunc(stackedWidget, RemoveType::AllNotSelected);
+        removeFilesDialog.close();
+        });
+    QObject::connect(&removeFilesDialog, &NXContentDialog::rightButtonClicked, this, [&]() {
+        removeFilesFunc(stackedWidget, RemoveType::All);
+        });
+    removeFilesDialog.exec();
 }
 
 // 主模块一：所有子模块表格都接收PDF文件
@@ -462,8 +530,7 @@ void PWConverterWidget::_distributeFilesToPDFToWord(QStackedWidget* stackedWidge
     QStringList filteredFiles;
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
-        if (suffix == "pdf") {
+        if (fileInfo.suffix().toLower() == "pdf") {
             filteredFiles.append(filePath);
         }
     }
@@ -474,14 +541,13 @@ void PWConverterWidget::_distributeFilesToPDFToWord(QStackedWidget* stackedWidge
     for (int i = 0; i < stackedWidget->count(); ++i) {
         QWidget* wrapperWidget = stackedWidget->widget(i);
         if (!wrapperWidget) continue;
+        PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
+        if (!tableWidget) continue;
 
-        // 获取子模块名称
-        QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-        if (slaveName.isEmpty()) continue;
-
-        PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
-        if (tableWidget) {
-            tableWidget->addFiles(filteredFiles);
+        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            tableWidgetPtr.has_value())
+        {
+            tableWidgetPtr.value().Value->addFiles(filteredFiles);
         }
     }
 }
@@ -493,8 +559,7 @@ void PWConverterWidget::_distributeFilesToWordToPDF(QStackedWidget* stackedWidge
 
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
-        QString fileType = Scope::Utils::GetFileTypeByExtension(suffix);
+        const QString& fileType = Scope::Utils::GetFileTypeByExtension(fileInfo.suffix().toLower());
 
         if (!fileType.isEmpty()) {
             filesByType[fileType].append(filePath);
@@ -505,15 +570,16 @@ void PWConverterWidget::_distributeFilesToWordToPDF(QStackedWidget* stackedWidge
     for (int i = 0; i < stackedWidget->count(); ++i) {
         QWidget* wrapperWidget = stackedWidget->widget(i);
         if (!wrapperWidget) continue;
+        PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
+        if (!tableWidget) continue;
 
-        QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-        if (slaveName.isEmpty()) continue;
-
-        QString expectedFileType = Scope::Utils::GetExpectedFileTypeForSlave2(slaveName);
-        if (filesByType.contains(expectedFileType)) {
-            PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
-            if (tableWidget) {
-                tableWidget->addFiles(filesByType[expectedFileType]);
+        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            tableWidgetPtr.has_value())
+        {
+            auto [slaveName, ptr] = tableWidgetPtr.value();
+            const QString& expectedFileType = Scope::Utils::GetExpectedFileTypeForSlave2(slaveName);
+            if (filesByType.contains(expectedFileType)) {
+                ptr->addFiles(filesByType[expectedFileType]);
             }
         }
     }
@@ -527,7 +593,7 @@ void PWConverterWidget::_distributeFilesToPDFAction(QStackedWidget* stackedWidge
     
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
+        const QString& suffix = fileInfo.suffix().toLower();
 
         if (suffix == "pdf") {
             pdfFiles.append(filePath);
@@ -542,14 +608,15 @@ void PWConverterWidget::_distributeFilesToPDFAction(QStackedWidget* stackedWidge
     for (int i = 0; i < stackedWidget->count(); ++i) {
         QWidget* wrapperWidget = stackedWidget->widget(i);
         if (!wrapperWidget) continue;
-
-        QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-        if (slaveName.isEmpty()) continue;
-
-        PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
+        PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
 
-        tableWidget->addFiles(slaveName == "DocumentTranslate" ? documentFiles : pdfFiles);
+        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            tableWidgetPtr.has_value())
+        {
+            auto [slaveName, ptr] = tableWidgetPtr.value();
+            ptr->addFiles(slaveName == "DocumentTranslate" ? documentFiles : pdfFiles);
+        }
     }
 }
 
@@ -560,7 +627,7 @@ void PWConverterWidget::_distributeFilesToImageAction(QStackedWidget* stackedWid
     QStringList imageFiles;
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
+        const QString& suffix = fileInfo.suffix().toLower();
 
         if (suffix == "pdf") {
             pdfFiles.append(filePath);
@@ -574,19 +641,19 @@ void PWConverterWidget::_distributeFilesToImageAction(QStackedWidget* stackedWid
     for (int i = 0; i < stackedWidget->count(); ++i) {
         QWidget* wrapperWidget = stackedWidget->widget(i);
         if (!wrapperWidget) continue;
-
-        QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-        if (slaveName.isEmpty()) continue;
-
-        PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
+        PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
 
-        tableWidget->addFiles(slaveName == "PDFToImage" ? pdfFiles : imageFiles);
+        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            tableWidgetPtr.has_value())
+        {
+            auto [slaveName, ptr] = tableWidgetPtr.value();
+            ptr->addFiles(slaveName == "PDFToImage" ? pdfFiles : imageFiles);
+        }
     }
 }
 
 void PWConverterWidget::_asyncFilterAndDistributeFiles(WizConverter::Module::Enums::MasterModule::Type masterType, const QStringList& filePaths) {
-    using namespace WizConverter::Module::Enums;
     
     // 异步文件过滤和分发任务类
     class AsyncFileFilterTask : public QRunnable {
@@ -623,7 +690,7 @@ void PWConverterWidget::_asyncFilterAndDistributeFiles(WizConverter::Module::Enu
         QStringList _pFilePaths;
     };
     AsyncFileFilterTask* task = new AsyncFileFilterTask(this, masterType, filePaths);
-    _pThreadPool->start(task);
+    QThreadPool::globalInstance()->start(task);
 }
 
 void PWConverterWidget::_distributeFilesToCurrentModule(WizConverter::Module::Enums::MasterModule::Type masterType, int slaveIndex, const QStringList& filePaths) {
@@ -634,26 +701,25 @@ void PWConverterWidget::_distributeFilesToCurrentModule(WizConverter::Module::En
 
     QWidget* wrapperWidget = stackedWidget->widget(slaveIndex);
     if (!wrapperWidget) return;
+    PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
+    if (!tableWidget) return;
 
-    QString slaveName = Scope::Utils::GetSlaveModuleName(wrapperWidget);
-    if (slaveName.isEmpty()) return;
-
-    PWFileTableWidget* tableWidget = wrapperWidget->property(slaveName.toUtf8()).value<PWFileTableWidget*>();
-    if (tableWidget) {
-        tableWidget->addFiles(filePaths);
+    if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+        tableWidgetPtr.has_value())
+    {
+        tableWidgetPtr.value().Value->addFiles(filePaths);
     }
 }
 
 void PWConverterWidget::_processCurrentModuleFiles(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
-    using namespace WizConverter::Module::Enums;
     
     QStringList currentModuleFiles;
     
     // 根据主模块类型和当前子模块过滤文件
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
-        QString fileType = Scope::Utils::GetFileTypeByExtension(suffix);
+        const QString& suffix = fileInfo.suffix().toLower();
+        const QString& fileType = Scope::Utils::GetFileTypeByExtension(suffix);
         
         bool shouldAddToCurrentModule = false;
         
@@ -704,8 +770,8 @@ void PWConverterWidget::_processCurrentModuleFiles(WizConverter::Module::Enums::
     }
 }
 
-void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
-    using namespace WizConverter::Module::Enums;
+void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) 
+{
     
     // 获取需要分发的文件分类
     QHash<int, QStringList> moduleFileMap = _categorizeFilesForDistribution(masterType, currentSlaveIndex, filePaths);
@@ -771,18 +837,17 @@ void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Module::Enu
     };
     
     AsyncDistributionTask* task = new AsyncDistributionTask(this, masterType, std::move(moduleFileMap));
-    _pThreadPool->start(task);
+    QThreadPool::globalInstance()->start(task);
 }
 
 QHash<int, QStringList> PWConverterWidget::_categorizeFilesForDistribution(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
-    using namespace WizConverter::Module::Enums;
     
     QHash<int, QStringList> moduleFileMap;
     
     for (const QString& filePath : filePaths) {
         QFileInfo fileInfo(filePath);
-        QString suffix = fileInfo.suffix().toLower();
-        QString fileType = Scope::Utils::GetFileTypeByExtension(suffix);
+        const QString& suffix = fileInfo.suffix().toLower();
+        const QString& fileType = Scope::Utils::GetFileTypeByExtension(suffix);
         
         switch (masterType) {
         case MasterModule::Type::PDFToWord: {

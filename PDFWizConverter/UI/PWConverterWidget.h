@@ -1,19 +1,10 @@
 ﻿#pragma once
 
-#include <QThreadPool>
-#include <QMutex>
-#include <QRunnable>
-#include <QMetaObject>
 #include <NXWidget.h>
 #include "PWDef.h"
 #include "Component/PWToolButton.h"
 
-// C++20 标准库头文件
-#include <mutex>
-#include <condition_variable>
 #include <future>
-#include <thread>
-#include <atomic>
 #include <shared_mutex>
 #include <latch>
 #include <semaphore>
@@ -77,11 +68,7 @@ private:
     QButtonGroup* _pMasterButtonGroup{ nullptr };
     QStackedWidget* _pMasterStackedWidget{ nullptr };
 
-    // 线程安全相关成员
-    QThreadPool* _pThreadPool{ nullptr };
-    QMutex _pSlaveModuleMutex; // 保护子模块创建状态的互斥锁
-    
-    // C++20 同步机制成员变量
+    std::mutex _pSlaveModuleMutex; // 保护子模块创建状态的互斥锁
     std::shared_mutex _moduleCreationMutex;
     std::unordered_map<int, std::shared_ptr<std::latch>> _moduleCreationLatches;
     std::counting_semaphore<10> _distributionSemaphore{10}; // 限制并发分发任务数量
