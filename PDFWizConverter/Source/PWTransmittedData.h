@@ -3,7 +3,7 @@
 #include <QString>
 #include <QVector>
 
-namespace WizConverter::Module::TransmittedData {
+namespace WizConverter::TransmittedData {
 
 struct Base {
     QString OutputDir{ "" };

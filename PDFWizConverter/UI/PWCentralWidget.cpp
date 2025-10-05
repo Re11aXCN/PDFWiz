@@ -10,7 +10,7 @@
 #include "Component/PWTableMaskWidget.h"
 #include "Component/PWTableView.h"
 #include "Component/PWTableViewModel.h"
-using namespace WizConverter::Module::Enums;
+using namespace WizConverter::Enums;
 namespace Scope::Utils {
     struct HeaderViewMetadata {
         QStringList TextList;
@@ -86,6 +86,7 @@ PWCentralWidget::PWCentralWidget(QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(_pLayer);
 
+    QObject::connect(_pTableView, &PWTableView::switchClicked, this, &PWCentralWidget::switchToTableView);
     QObject::connect(_pTableMask, &PWTableMaskWidget::pressed, this, &PWCentralWidget::_openFileExplorer);
     QObject::connect(tableModel, &PWTableViewModel::rowsInserted, this, [this, tableModel]() {
         const PWTableViewModel::RowData& rowData = tableModel->getRowData(0);
@@ -113,8 +114,8 @@ PWCentralWidget::PWCentralWidget(QWidget* parent)
             QVariant(), // 第0列：复选框，不需要数据
             "E:/Mozilla-Recovery-Key_2025-07-28_2634544095@qq.com.pdf", // 第1列：文件名
             "25",       // 第2列：总页数
-            QVariant(), // 第3列：转换页面范围（无文本）
-            QVariant(), // 第4列：输出格式（无文本）
+            QVariant::fromValue(_pTableView->createRangeWidget()), // 第3列：转换页面范围（无文本）
+            QVariant::fromValue(_pTableView->createSwitchWidget()), // 第4列：输出格式（无文本）
             _pFileBereadyState, // 第5列：BEREADY状态文本,其他状态固定（通过State字段控制）
             QVariant(), // 第6列：操作（无文本）
             QVariant()  // 第7列：删除（无文本）
@@ -129,8 +130,8 @@ PWCentralWidget::PWCentralWidget(QWidget* parent)
             QVariant(), // 第0列：复选框，不需要数据
             "E:/Project/小五编码-C++必知必会.doc", // 第1列：文件名
             "25",       // 第2列：总页数
-            QVariant(), // 第3列：转换页面范围（无文本）
-            QVariant(), // 第4列：输出格式（无文本）
+           QVariant::fromValue(_pTableView->createRangeWidget()), // 第3列：转换页面范围（无文本）
+           QVariant::fromValue(_pTableView->createSwitchWidget()), // 第4列：输出格式（无文本）
             _pFileBereadyState, // 第5列：BEREADY状态文本,其他状态固定（通过State字段控制）
             QVariant(), // 第6列：操作（无文本）
             QVariant()  // 第7列：删除（无文本）
@@ -149,15 +150,16 @@ void PWCentralWidget::setMask(const QPixmap& mask)
     _pTableMask->setMask(mask);
 }
 
-void PWCentralWidget::setModuleType(WizConverter::Module::Enums::ModuleType ModuleType)
+void PWCentralWidget::setModuleType(WizConverter::Enums::ModuleType ModuleType)
 {
     _pModuleType = ModuleType;
     auto [headerTextList, columnWidthList] = Scope::Utils::GetHeaderViewMetadata(_pModuleType.MasterModuleType, _pModuleType.SlaveModuleType);
+    _pTableView->setModuleType(_pModuleType);
     _pTableView->setHeaderTextList(headerTextList);
     _pTableView->setColumnWidthList(columnWidthList);
 }
 
-WizConverter::Module::Enums::ModuleType PWCentralWidget::getModuleType() const
+WizConverter::Enums::ModuleType PWCentralWidget::getModuleType() const
 {
     return _pModuleType;
 }

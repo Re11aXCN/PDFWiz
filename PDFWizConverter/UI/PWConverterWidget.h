@@ -13,13 +13,14 @@
 
 class QStackedWidget;
 class QButtonGroup;
+class NXMessageButton;
 class PWConverterWidget : public NXWidget {
     Q_OBJECT
 
 public:
     explicit PWConverterWidget(QWidget* parent = nullptr);
     ~PWConverterWidget();
-
+    static void ShowMessage(const QString& title, const QString& text, NXMessageBarType::MessageMode mode, NXMessageBarType::PositionPolicy position, int displayMsec = 2000);
 Q_SIGNALS:
 
 protected:
@@ -36,8 +37,8 @@ private:
     PWToolButton::MetaData _parseToolButtonMetaData(const QJsonObject& metadataObj);
     QHash<PWToolButton::MetaData::State, QColor> _parseToolButtonTextColor(const QJsonObject& textColorObj);
     
-    void _handleAddFiles(WizConverter::Module::Enums::MasterModule::Type masterType);
-    void _handleRemoveFiles(WizConverter::Module::Enums::MasterModule::Type masterType);
+    void _handleAddFiles(WizConverter::Enums::MasterModule::Type masterType);
+    void _handleRemoveFiles(WizConverter::Enums::MasterModule::Type masterType);
     void _distributeFilesToPDFToWord(QStackedWidget* stackedWidget,
         const QStringList& filePaths);
     void _distributeFilesToWordToPDF(QStackedWidget* stackedWidget,
@@ -48,21 +49,21 @@ private:
         const QStringList& filePaths);
 
     // 异步文件处理相关方法
-    void _asyncFilterAndDistributeFiles(WizConverter::Module::Enums::MasterModule::Type masterType, const QStringList& filePaths);
-    void _processCurrentModuleFiles(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
+    void _asyncFilterAndDistributeFiles(WizConverter::Enums::MasterModule::Type masterType, const QStringList& filePaths);
+    void _processCurrentModuleFiles(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
 
-    void _distributeFilesToCurrentModule(WizConverter::Module::Enums::MasterModule::Type masterType, int slaveIndex, const QStringList& filePaths);
-    void _distributeToOtherSlaveModules(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
+    void _distributeFilesToCurrentModule(WizConverter::Enums::MasterModule::Type masterType, int slaveIndex, const QStringList& filePaths);
+    void _distributeToOtherSlaveModules(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
 
-    QHash<int, QStringList> _categorizeFilesForDistribution(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
-    std::future<void> _createSlaveModuleAsync(WizConverter::Module::Enums::MasterModule::Type masterType, int slaveIndex);
+    QHash<int, QStringList> _categorizeFilesForDistribution(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths);
+    std::future<void> _createSlaveModuleAsync(WizConverter::Enums::MasterModule::Type masterType, int slaveIndex);
 
     struct SlaveModuleMetadata {
         QButtonGroup* ButtonGroup{ nullptr };
         QStackedWidget* StackedWidget{ nullptr };
         QHash<int, bool> CreatedModules; // 记录哪些子模块已经创建
     };
-    QHash<WizConverter::Module::Enums::MasterModule::Type, SlaveModuleMetadata> _pSlaveMetadataMap;
+    QHash<WizConverter::Enums::MasterModule::Type, SlaveModuleMetadata> _pSlaveMetadataMap;
     //QHash<QString, QStackedWidget*> _pSlaveTableStackedWidget;
 
     QButtonGroup* _pMasterButtonGroup{ nullptr };
@@ -72,4 +73,6 @@ private:
     std::shared_mutex _moduleCreationMutex;
     std::unordered_map<int, std::shared_ptr<std::latch>> _moduleCreationLatches;
     std::counting_semaphore<10> _distributionSemaphore{10}; // 限制并发分发任务数量
+
+    inline static NXMessageButton* _pMessageButton;
 };

@@ -1,15 +1,21 @@
 ﻿#include "PWTableViewModel.h"
 #include <QIcon>
 #include <QPixmap>
+#include <QProcess>
+#include <QUrl>
+#include <QDir>
 #include <QFileInfo>
+#include <QDesktopServices>
 
 #include "PWTableView.h"
-using namespace WizConverter::Module::Enums;
+#include "PWConverterWidget.h"
+using namespace WizConverter::Enums;
 
 PWTableViewModel::PWTableViewModel(QObject* parent)
     : QAbstractTableModel{ parent }
     , _pCheckedRowCount{ 0 }
 {
+    _pTableView = qobject_cast<PWTableView*>(this->parent());
     _pCheckIconList.reserve(5);
     _pFileTypeIconList.reserve((qsizetype)FileFormatType::__END);
     _pCheckIconList.append(QIcon(QPixmap(":/Resource/Image/Button/Checkbox_Unchecked.svg").scaled(TABLE_VIEW_CHECKICON_SIZE, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
@@ -165,6 +171,11 @@ void PWTableViewModel::setCellData(int row, const QVariantList& cellDatas)
     if (row < 0 || row >= _pRowDataList.size()) return;
 
     _pRowDataList[row].CellData = cellDatas;
+    _pRowDataList[row].CellData.resize(columnCount());
+    _updataCellIndexWidget(row, 3);
+
+    // 后续可能需要修改拓展这个逻辑, 这里写死了
+    if (columnCount() == 8) _updataCellIndexWidget(row, 4); // 仅 PDFToWord 模块
 
     // 通知整行数据改变
     QModelIndex topLeft = createIndex(row, 0);
@@ -177,6 +188,9 @@ void PWTableViewModel::setCellData(int row, QVariantList&& cellDatas)
     if (row < 0 || row >= _pRowDataList.size()) return;
 
     _pRowDataList[row].CellData = std::move(cellDatas);
+    _pRowDataList[row].CellData.resize(columnCount());
+    _updataCellIndexWidget(row, 3);
+    if (columnCount() == 8) _updataCellIndexWidget(row, 4);
 
     QModelIndex topLeft = createIndex(row, 0);
     QModelIndex bottomRight = createIndex(row, columnCount() - 1);
@@ -196,8 +210,17 @@ void PWTableViewModel::setCellData(int row, int column, const QVariant& value)
 
     RowData& rowData = _pRowDataList[row];
 
-    if (rowData.CellData.size() <= column) rowData.CellData.resize(column + 1);
+    if (rowData.CellData.size() <= column) rowData.CellData.resize(columnCount());
     rowData.CellData[column] = value;
+
+    if ((column == 3 || column == 4) && value.isValid() && value.canConvert<NXModelIndexWidget*>()) {
+        NXModelIndexWidget* widget = value.value<NXModelIndexWidget*>();
+        if (widget) {
+            QModelIndex newIndex = createIndex(row, column);
+            widget->setIndex(newIndex);
+            _pTableView->setIndexWidget(newIndex, widget);
+        }
+    }
 
     QModelIndex index = createIndex(row, column);
     Q_EMIT dataChanged(index, index);
@@ -221,8 +244,10 @@ void PWTableViewModel::setRowData(const QList<RowData>& rowDataList)
 
     beginResetModel();
     _pRowDataList = rowDataList;
-    // 防止用户忘记设置索引, Checked
+    // 防止用户忘记设置索引, Checked, columnCount必须和表头一致
     _updateAllRowStates();
+    // 更新所有 widget 的索引
+    _updateAllWidgetsIndex();
     endResetModel();
 }
 
@@ -233,15 +258,22 @@ void PWTableViewModel::setRowData(QList<RowData>&& rowDataList)
     beginResetModel();
     _pRowDataList = std::move(rowDataList);
     _updateAllRowStates();
+    _updateAllWidgetsIndex();
     endResetModel();
 }
 
 void PWTableViewModel::appendRowData(const RowData& rowData)
 {
     beginInsertRows(QModelIndex(), _pRowDataList.size(), _pRowDataList.size());
+    int newRow = _pRowDataList.size();
     RowData newRowData = rowData;
-    newRowData.Index = _pRowDataList.size(); // 设置新行的索引
+    newRowData.Index = newRow; // 设置新行的索引
+    newRowData.CellData.resize(columnCount());
     _pRowDataList.append(std::move(newRowData));
+
+    // 设置新行的 widget
+    _setupWidgetForNewRow(newRow, _pRowDataList[newRow]);
+
     if (rowData.Checked) ++_pCheckedRowCount;
     endInsertRows();
 }
@@ -249,8 +281,13 @@ void PWTableViewModel::appendRowData(const RowData& rowData)
 void PWTableViewModel::appendRowData(RowData&& rowData)
 {
     beginInsertRows(QModelIndex(), _pRowDataList.size(), _pRowDataList.size());
-    rowData.Index = _pRowDataList.size();
+    int newRow = _pRowDataList.size();
+    rowData.Index = newRow;
+    rowData.CellData.resize(columnCount());
     _pRowDataList.append(std::move(rowData));
+
+    _setupWidgetForNewRow(newRow, _pRowDataList[newRow]);
+
     if (rowData.Checked) ++_pCheckedRowCount;
     endInsertRows();
 }
@@ -262,9 +299,15 @@ void PWTableViewModel::insertRowData(int row, const RowData& rowData)
     beginInsertRows(QModelIndex(), row, row);
     RowData newRowData = rowData;
     newRowData.Index = row; // 设置插入行的索引
+    newRowData.CellData.resize(columnCount());
     _pRowDataList.insert(row, std::move(newRowData));
-    // 更新插入位置之后所有行的索引
-    _updateRowIndexesFrom(row + 1);
+
+    // 设置插入行的 widget
+    _setupWidgetForNewRow(row, _pRowDataList[row]);
+
+    // 更新插入位置之后所有行的索引和 widget
+    _updateRowStatesFrom(row + 1);
+    _updateRowWidgetsIndexFrom(row + 1);
     endInsertRows();
 }
 
@@ -274,8 +317,13 @@ void PWTableViewModel::insertRowData(int row, RowData&& rowData)
 
     beginInsertRows(QModelIndex(), row, row);
     rowData.Index = row;
+    rowData.CellData.resize(columnCount());
     _pRowDataList.insert(row, std::move(rowData));
-    _updateRowIndexesFrom(row + 1);
+
+    _setupWidgetForNewRow(row, _pRowDataList[row]);
+
+    _updateRowStatesFrom(row + 1);
+    _updateRowWidgetsIndexFrom(row + 1);
     endInsertRows();
 }
 
@@ -288,6 +336,8 @@ void PWTableViewModel::removeRowData(int row)
     beginRemoveRows(QModelIndex(), row, row);
     _pRowDataList.removeAt(row);
     _updateRowIndexesFrom(row);
+    // 更新被删除行之后所有行的 widget 索引
+    _updateRowWidgetsIndexFrom(row);
     endRemoveRows();
 
     if (wasChecked && _pCheckedRowCount > 0) {
@@ -356,8 +406,9 @@ void PWTableViewModel::onRemoveSelectedRows()
             endRemoveRows();
         }
     }    
-    // 删除完成后重新设置所有行的索引
+    // 删除完成后重新设置所有行的索引和 widget
     _updateAllRowIndexes();
+    _updateAllWidgetsIndex();
     _pCheckedRowCount = 0;
 
     // 更新视图
@@ -382,6 +433,7 @@ void PWTableViewModel::onRemoveNotSelectedRows()
         }
     }
     _updateAllRowIndexes();
+    _updateAllWidgetsIndex();
 
     if (!_pRowDataList.isEmpty()) {
         QModelIndex topLeft = createIndex(0, 0);
@@ -404,6 +456,58 @@ void PWTableViewModel::onRemoveAllRows()
     Q_EMIT headerDataChanged(Qt::Horizontal, 0, 1);
 }
 
+void PWTableViewModel::onDelegateIconClicked(PWTableViewIconDelegate::IconRole role, const QModelIndex& index)
+{
+    using IconRole = PWTableViewIconDelegate::IconRole;
+    if (!index.isValid() || index.row() >= _pRowDataList.size())
+        return;
+    const RowData& rowData = _pRowDataList[index.row()];
+    if ((rowData.State & FileStateType::ERR) && role != IconRole::RemoveFile) {
+        PWConverterWidget::ShowMessage("Error", "文件不存在或已损坏，请重新选择！", NXMessageBarType::Error, NXMessageBarType::TopLeft);
+        return;
+    }
+    switch (role) {
+    case IconRole::Run:
+        // TODO: 执行当个文件转换
+        break;
+    case IconRole::OpenFile: QDesktopServices::openUrl(QUrl::fromLocalFile(rowData.CellData.at(1).toString()));break;
+    case IconRole::OpenFolder: {
+#if defined(Q_OS_WIN)
+        QProcess::startDetached("explorer.exe", QStringList{} << "/select," << QDir::toNativeSeparators(rowData.CellData.at(1).toString()));
+#elif defined(Q_OS_MAC)
+        QProcess::startDetached("open", QStringList{} << "-R" << QDir::toNativeSeparators(rowData.CellData.at(1).toString()));
+#elif defined(Q_OS_LINUX)
+        QStringList fileManagers = {
+            "nautilus", "dolphin", "thunar", "caja", "nemo", "pcmanfm", "kfmclient"
+        };
+        for (const QString& manager : fileManagers) {
+            if (QProcess::execute("which", QStringList() << manager) == 0) {
+                QStringList args;
+
+                // 如果指定了选中文件，尝试使用相应参数
+                if (manager == "nautilus" || manager == "nemo" || manager == "dolphin") {
+                    args << "--select" << selectFile;
+                }
+                // Thunar不支持直接选中文件，只打开文件夹
+                else if (manager == "thunar") args << folderPath;
+                else if (manager == "kfmclient")  args << "exec" << selectFile;
+                else args << folderPath;
+
+                if (QProcess::startDetached(manager, args)) return;
+            }
+        }
+        // 如果所有文件管理器都失败，使用xdg-open
+        QProcess::startDetached("xdg-open", QStringList{} << QDir::toNativeSeparators(rowData.CellData.at(1).toString()));
+#else
+        QDesktopServices::openUrl(QUrl::fromLocalFile(rowData.CellData.at(1).toString()));
+#endif
+        break;
+    }
+    case IconRole::RemoveFile: removeRowData(index.row()); break;
+    default: break;
+    }
+}
+
 QVariant PWTableViewModel::_formatRowData(const RowData& rowData, int column) const
 {
     const QString& headerText = _pHeaderTextList.at(column);
@@ -417,10 +521,9 @@ QVariant PWTableViewModel::_formatRowData(const RowData& rowData, int column) co
         QFileInfo fileInfo(fileAbsolutePath);
         const QString& fileName = fileInfo.fileName();
 
-        PWTableView* tableView = qobject_cast<PWTableView*>(parent());
-        QFontMetrics metrics(tableView->font());
+        QFontMetrics metrics(_pTableView->font());
 
-        int cellWidth = tableView->columnWidth(column);
+        int cellWidth = _pTableView->columnWidth(column);
         int availableWidth = cellWidth - 118;
         if (fileInfo.isFile() && fileInfo.exists()) {
             if (metrics.horizontalAdvance(fileName) > availableWidth) {
@@ -437,7 +540,7 @@ QVariant PWTableViewModel::_formatRowData(const RowData& rowData, int column) co
         return rowData.CellData.at(2).isNull() ? QVariant() : rowData.CellData.at(2);
     case 5: { // 状态
         if (rowData.CellData.at(5).isNull()) return QVariant();
-        switch (rowData.State) {
+        switch (static_cast<FileStateType>(rowData.State.toInt())) {
         case FileStateType::LOADING: return "加载中";
         case FileStateType::BEREADY: return rowData.CellData.at(5); // 由JSON配置设置
         case FileStateType::PROCESSING: return "转换中";
@@ -457,6 +560,13 @@ void PWTableViewModel::_updateRowIndexesFrom(int startRow)
 {
     for (int i = startRow; i < _pRowDataList.size(); ++i) {
         _pRowDataList[i].Index = i;
+    }
+}
+
+void PWTableViewModel::_updateRowStatesFrom(int startRow)
+{
+    for (int i = startRow; i < _pRowDataList.size(); ++i) {
+        _pRowDataList[i].Index = i;
         if(_pRowDataList[i].Checked) ++_pCheckedRowCount;
     }
 }
@@ -470,8 +580,72 @@ void PWTableViewModel::_updateAllRowIndexes()
 
 void PWTableViewModel::_updateAllRowStates()
 {
+    _pCheckedRowCount = 0;
     for (int i = 0; i < _pRowDataList.size(); ++i) {
         _pRowDataList[i].Index = i;
+        if (auto& cellData = _pRowDataList[i].CellData; cellData.size() != columnCount()) cellData.resize(columnCount());
         if (_pRowDataList[i].Checked) ++_pCheckedRowCount;
     }
+}
+
+void PWTableViewModel::_updataCellIndexWidget(int row, int column)
+{   // 更新该行的 widget 索引
+    if (_pRowDataList[row].CellData.size() > column) {
+        QVariant widgetVariant = _pRowDataList[row].CellData[column];
+        if (widgetVariant.isValid() && widgetVariant.canConvert<NXModelIndexWidget*>()) {
+            NXModelIndexWidget* widget = widgetVariant.value<NXModelIndexWidget*>();
+            if (widget) {
+                QModelIndex newIndex = createIndex(row, column);
+                widget->setIndex(newIndex);
+                _pTableView->setIndexWidget(newIndex, widget);
+            }
+        }
+    }
+}
+
+void PWTableViewModel::_updateRowWidgetsIndexFrom(int startRow)
+{
+    for (int row = startRow; row < _pRowDataList.size(); ++row) {
+        _updataCellIndexWidget(row, 3);
+        if (columnCount() == 8) _updataCellIndexWidget(row, 4);
+    }
+}
+
+void PWTableViewModel::_updateAllWidgetsIndex()
+{
+    for (int row = 0; row < _pRowDataList.size(); ++row) {
+        _updataCellIndexWidget(row, 3);
+        if (columnCount() == 8) _updataCellIndexWidget(row, 4);
+    }
+}
+
+void PWTableViewModel::_setupWidgetForNewRow(int row, RowData& rowData)
+{
+    // 没有足够的列
+    if (columnCount() <= 3)  return;
+
+    auto createWidgetFromColumnFunc = [&](int column) {
+        // 创建新的 widget 或更新现有 widget 的索引
+        QVariant widgetVariant = rowData.CellData[column];
+        NXModelIndexWidget* widget = nullptr;
+
+        if (widgetVariant.isValid() && widgetVariant.canConvert<NXModelIndexWidget*>()) {
+            widget = widgetVariant.value<NXModelIndexWidget*>();
+        }
+        else {
+            // 创建新的 widget
+            widget = new NXModelIndexWidget(_pTableView);
+            rowData.CellData[column] = QVariant::fromValue(widget);
+        }
+
+        if (widget) {
+            QModelIndex newIndex = createIndex(row, column);
+            widget->setIndex(newIndex);
+
+            _pTableView->setIndexWidget(newIndex, widget);
+        }
+        };
+
+    createWidgetFromColumnFunc(3);
+    if (columnCount() == 8) createWidgetFromColumnFunc(4);
 }

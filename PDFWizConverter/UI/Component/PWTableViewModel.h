@@ -3,6 +3,8 @@
 #include <QAbstractTableModel>
 #include "PWDef.h"
 
+#include "PWTableViewIconDelegate.h"
+class PWTableView;
 class PWTableViewModel : public QAbstractTableModel {
     Q_OBJECT
     Q_PRIVATE_CREATE_D(int, CheckedRowCount)
@@ -10,7 +12,7 @@ public:
     struct RowData {
         QVariantList CellData;
         int Index{0};
-        FileStateType State{ FileStateType::LOADING };
+        FileStates State{ FileStateType::LOADING };
         bool Checked{ false };
     };
     explicit PWTableViewModel(QObject* parent = nullptr);
@@ -51,14 +53,23 @@ public Q_SLOTS:
     void onRemoveSelectedRows();
     void onRemoveNotSelectedRows();
     void onRemoveAllRows();
+    void onDelegateIconClicked(PWTableViewIconDelegate::IconRole role, const QModelIndex& index);
 private:
     QVariant _formatRowData(const RowData& rowData, int column) const;
+    void _updateRowStatesFrom(int startRow);
     void _updateRowIndexesFrom(int startRow);
     void _updateAllRowIndexes();
     void _updateAllRowStates();
+
+    void _updataCellIndexWidget(int row, int column);
+    void _updateRowWidgetsIndexFrom(int startRow);
+    void _updateAllWidgetsIndex();
+    void _setupWidgetForNewRow(int row, RowData& rowData);
 
     QStringList _pHeaderTextList;
     QList<RowData> _pRowDataList;
     QList<QIcon> _pCheckIconList;
     QList<QIcon> _pFileTypeIconList;
+
+    PWTableView* _pTableView{ nullptr };
 };

@@ -1,10 +1,11 @@
 ﻿#pragma once
 
 #include <NXProperty.h>
+#include <NXDef.h>
 #include <QSize>
 #include <variant>
 #include <absl/container/flat_hash_map>
-namespace WizConverter::Module {
+namespace WizConverter {
     namespace Enums {
         struct FileFormat {
             enum class Type : int8_t {
@@ -43,17 +44,23 @@ namespace WizConverter::Module {
             }
         };
         struct FileState {
-            enum class Type : int8_t {
-                LOADING = 0,
-                BEREADY,
-                PROCESSING,
-                SUCCESS,
-                FAILED,
-                CORRUPTION,
-                DELETED,
-                UNKONWERROR
+            enum class Type {
+                LOADING = 0x0001,
+                BEREADY = 0x0002,
+                PROCESSING = 0x0004,
+                SUCCESS = 0x0008,
+                FAILED = 0x0010,
+                CORRUPTION = 0x0020,
+                DELETED = 0x0040,
+                UNKONWERROR = 0x0080,
+
+                OK = LOADING | BEREADY | PROCESSING | SUCCESS,
+                ERR = FAILED | CORRUPTION | DELETED | UNKONWERROR,
             };
+            Q_DECLARE_FLAGS(FileStates, FileState::Type)
         };
+        Q_DECLARE_OPERATORS_FOR_FLAGS(FileState::FileStates)
+
         struct MasterModule {
             enum class Type {
                 PDFToWord,
@@ -233,8 +240,9 @@ namespace WizConverter::Module {
     }
 }
 
-using FileStateType = WizConverter::Module::Enums::FileState::Type;
-using FileFormatType = WizConverter::Module::Enums::FileFormat::Type;
+using FileStateType = WizConverter::Enums::FileState::Type;
+using FileStates = WizConverter::Enums::FileState::FileStates;
+using FileFormatType = WizConverter::Enums::FileFormat::Type;
 
 #define TABLE_VIEW_CHECKICON_ADJUST 16, 5, 11, -1
 constexpr QSize TABLE_VIEW_CHECKICON_SIZE{ 24, 24 };

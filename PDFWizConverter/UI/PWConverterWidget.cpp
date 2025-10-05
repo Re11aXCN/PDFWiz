@@ -19,6 +19,8 @@
 
 #include <NXText.h>
 #include <NXContentDialog.h>
+#include <NXMessageButton.h>
+
 #include <magic_enum/magic_enum.hpp>
 #include <absl/container/flat_hash_map>
 #include "PWLogger.h"
@@ -38,7 +40,7 @@ constexpr int SLAVE_MODULE_WIDGET_TABLE_AREA_HEIGHT = 335;
 static QSet<QString> sTranslateExtensions = { "doc", "docx", "rtf", "txt" };
 static QSet<QString> sImageActionExtensions = { "jpg", "jpeg", "png", "bmp", "tiff", "tif", "gif" };
 
-using namespace WizConverter::Module::Enums;
+using namespace WizConverter::Enums;
 namespace Scope::Utils {
     static QString GetFileTypeByExtension(const QString& extension) {
         static const absl::flat_hash_map<QString, QString> extensionToType = {
@@ -141,6 +143,16 @@ PWConverterWidget::~PWConverterWidget()
 {
 }
 
+void PWConverterWidget::ShowMessage(const QString& title, const QString& text, NXMessageBarType::MessageMode mode, NXMessageBarType::PositionPolicy position, int displayMsec)
+{
+    _pMessageButton->setBarTitle(title);
+    _pMessageButton->setBarText(text);
+    _pMessageButton->setMessageMode(mode);
+    _pMessageButton->setPositionPolicy(position);
+    _pMessageButton->setDisplayMsec(displayMsec);
+    Q_EMIT _pMessageButton->showMessage();
+}
+
 void PWConverterWidget::paintEvent(QPaintEvent* event)
 {
     NXWidget::paintEvent(event);
@@ -185,9 +197,11 @@ bool PWConverterWidget::eventFilter(QObject* obj, QEvent* event)
 
 void PWConverterWidget::_initUI()
 {
+    _pMessageButton = new NXMessageButton(this);
     _pMasterButtonGroup = new QButtonGroup(this);
     _pMasterStackedWidget = new QStackedWidget(this);
 
+    _pMessageButton->setVisible(false);
     _pMasterButtonGroup->setExclusive(true);
     _pMasterStackedWidget->move(0, getAppBarHeight());
     _pMasterStackedWidget->setFixedSize(width(), height() - getAppBarHeight());
@@ -262,6 +276,7 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
 
         _pMasterButtonGroup->addButton(masterModuleButton, static_cast<int>((*masterIt).Value));
         _pSlaveMetadataMap[(*masterIt).Value] = { .ButtonGroup = new QButtonGroup(this), .StackedWidget = new QStackedWidget(_pMasterStackedWidget) };
+        _pSlaveMetadataMap[(*masterIt).Value].ButtonGroup->setExclusive(true);
         _pSlaveMetadataMap[(*masterIt).Value].StackedWidget->setFixedSize(MAIN_WIDGET_WIDTH, SLAVE_MODULE_WIDGET_HEIGHT);
         _pSlaveMetadataMap[(*masterIt).Value].StackedWidget->move(_pMasterStackedWidget->x() + SLAVE_MODULE_WIDGET_X, _pMasterStackedWidget->y() + SLAVE_MODULE_WIDGET_BUTTON_AREA_HEIGHT);
         
@@ -305,7 +320,9 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
                 slaveModuleButtonObj["executeButtonText"].toString(),
                 executeButtonObj["buttonIcon"].toString(),
                 _parseToolButtonMetaData(executeComponent["metadata"].toObject()), this);*/
-
+            QObject::connect(centralWidget, &PWCentralWidget::switchToTableView, _pSlaveMetadataMap[masterType].ButtonGroup, [this, type = masterType](int id) {
+                _pSlaveMetadataMap[type].ButtonGroup->button(id)->click();
+                });
             };
         // 解析子模块按钮
         std::visit([&](auto&& array) {
@@ -453,7 +470,7 @@ QHash<PWToolButton::MetaData::State, QColor> PWConverterWidget::_parseToolButton
     return textColor;
 }
 
-void PWConverterWidget::_handleAddFiles(WizConverter::Module::Enums::MasterModule::Type masterType) {
+void PWConverterWidget::_handleAddFiles(WizConverter::Enums::MasterModule::Type masterType) {
     // 获取所有文件路径
     QStringList fileAbsolutePaths = QFileDialog::getOpenFileNames(this,
         "选择文件",
@@ -466,7 +483,7 @@ void PWConverterWidget::_handleAddFiles(WizConverter::Module::Enums::MasterModul
     _asyncFilterAndDistributeFiles(masterType, fileAbsolutePaths);
 }
 
-void PWConverterWidget::_handleRemoveFiles(WizConverter::Module::Enums::MasterModule::Type masterType)
+void PWConverterWidget::_handleRemoveFiles(WizConverter::Enums::MasterModule::Type masterType)
 {
     auto& slaveMetadata = _pSlaveMetadataMap[masterType];
     QStackedWidget* stackedWidget = slaveMetadata.StackedWidget;
@@ -479,15 +496,10 @@ void PWConverterWidget::_handleRemoveFiles(WizConverter::Module::Enums::MasterMo
             if (!wrapperWidget) continue;
             PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
             if (!tableWidget) continue;
-
-            if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-                tableWidgetPtr.has_value())
-            {
-                switch (removeType) {
-                case RemoveType::All: tableWidgetPtr.value().Value->removeAll(); break;
-                case RemoveType::AllSelected: tableWidgetPtr.value().Value->removeAllSelected(); break;
-                case RemoveType::AllNotSelected: tableWidgetPtr.value().Value->removeAllNotSelected(); break;
-                }
+            switch (removeType) {
+            case RemoveType::All: tableWidget->removeAll(); break;
+            case RemoveType::AllSelected: tableWidget->removeAllSelected(); break;
+            case RemoveType::AllNotSelected: tableWidget->removeAllNotSelected(); break;
             }
         }
         };
@@ -543,12 +555,7 @@ void PWConverterWidget::_distributeFilesToPDFToWord(QStackedWidget* stackedWidge
         if (!wrapperWidget) continue;
         PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
-
-        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-            tableWidgetPtr.has_value())
-        {
-            tableWidgetPtr.value().Value->addFiles(filteredFiles);
-        }
+        tableWidget->addFiles(filteredFiles);
     }
 }
 
@@ -573,13 +580,13 @@ void PWConverterWidget::_distributeFilesToWordToPDF(QStackedWidget* stackedWidge
         PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
 
-        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-            tableWidgetPtr.has_value())
+        if (auto moduleNameAndWidget = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            moduleNameAndWidget.has_value())
         {
-            auto [slaveName, ptr] = tableWidgetPtr.value();
+            auto [slaveName, tableWidgetPtr] = moduleNameAndWidget.value();
             const QString& expectedFileType = Scope::Utils::GetExpectedFileTypeForSlave2(slaveName);
             if (filesByType.contains(expectedFileType)) {
-                ptr->addFiles(filesByType[expectedFileType]);
+                tableWidgetPtr->addFiles(filesByType[expectedFileType]);
             }
         }
     }
@@ -610,12 +617,11 @@ void PWConverterWidget::_distributeFilesToPDFAction(QStackedWidget* stackedWidge
         if (!wrapperWidget) continue;
         PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
-
-        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-            tableWidgetPtr.has_value())
+        if (auto moduleNameAndWidget = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            moduleNameAndWidget.has_value())
         {
-            auto [slaveName, ptr] = tableWidgetPtr.value();
-            ptr->addFiles(slaveName == "DocumentTranslate" ? documentFiles : pdfFiles);
+            auto [slaveName, tableWidgetPtr] = moduleNameAndWidget.value();
+            tableWidgetPtr->addFiles(slaveName == "DocumentTranslate" ? documentFiles : pdfFiles);
         }
     }
 }
@@ -643,17 +649,16 @@ void PWConverterWidget::_distributeFilesToImageAction(QStackedWidget* stackedWid
         if (!wrapperWidget) continue;
         PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
         if (!tableWidget) continue;
-
-        if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-            tableWidgetPtr.has_value())
+        if (auto moduleNameAndWidget = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
+            moduleNameAndWidget.has_value())
         {
-            auto [slaveName, ptr] = tableWidgetPtr.value();
-            ptr->addFiles(slaveName == "PDFToImage" ? pdfFiles : imageFiles);
+            auto [slaveName, tableWidgetPtr] = moduleNameAndWidget.value();
+            tableWidgetPtr->addFiles(slaveName == "PDFToImage" ? pdfFiles : imageFiles);
         }
     }
 }
 
-void PWConverterWidget::_asyncFilterAndDistributeFiles(WizConverter::Module::Enums::MasterModule::Type masterType, const QStringList& filePaths) {
+void PWConverterWidget::_asyncFilterAndDistributeFiles(WizConverter::Enums::MasterModule::Type masterType, const QStringList& filePaths) {
     
     // 异步文件过滤和分发任务类
     class AsyncFileFilterTask : public QRunnable {
@@ -693,7 +698,7 @@ void PWConverterWidget::_asyncFilterAndDistributeFiles(WizConverter::Module::Enu
     QThreadPool::globalInstance()->start(task);
 }
 
-void PWConverterWidget::_distributeFilesToCurrentModule(WizConverter::Module::Enums::MasterModule::Type masterType, int slaveIndex, const QStringList& filePaths) {
+void PWConverterWidget::_distributeFilesToCurrentModule(WizConverter::Enums::MasterModule::Type masterType, int slaveIndex, const QStringList& filePaths) {
     auto& slaveMetadata = _pSlaveMetadataMap[masterType];
     QStackedWidget* stackedWidget = slaveMetadata.StackedWidget;
 
@@ -703,15 +708,10 @@ void PWConverterWidget::_distributeFilesToCurrentModule(WizConverter::Module::En
     if (!wrapperWidget) return;
     PWCentralWidget* tableWidget = wrapperWidget->findChild<PWCentralWidget*>("PWCentralWidget");
     if (!tableWidget) return;
-
-    if (auto tableWidgetPtr = Scope::Utils::GetPropertyValue<PWCentralWidget*>(tableWidget);
-        tableWidgetPtr.has_value())
-    {
-        tableWidgetPtr.value().Value->addFiles(filePaths);
-    }
+    tableWidget->addFiles(filePaths);
 }
 
-void PWConverterWidget::_processCurrentModuleFiles(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
+void PWConverterWidget::_processCurrentModuleFiles(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
     
     QStringList currentModuleFiles;
     
@@ -770,7 +770,7 @@ void PWConverterWidget::_processCurrentModuleFiles(WizConverter::Module::Enums::
     }
 }
 
-void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) 
+void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) 
 {
     
     // 获取需要分发的文件分类
@@ -840,7 +840,7 @@ void PWConverterWidget::_distributeToOtherSlaveModules(WizConverter::Module::Enu
     QThreadPool::globalInstance()->start(task);
 }
 
-QHash<int, QStringList> PWConverterWidget::_categorizeFilesForDistribution(WizConverter::Module::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
+QHash<int, QStringList> PWConverterWidget::_categorizeFilesForDistribution(WizConverter::Enums::MasterModule::Type masterType, int currentSlaveIndex, const QStringList& filePaths) {
     
     QHash<int, QStringList> moduleFileMap;
     
@@ -929,7 +929,7 @@ QHash<int, QStringList> PWConverterWidget::_categorizeFilesForDistribution(WizCo
     return moduleFileMap;
 }
 
-std::future<void> PWConverterWidget::_createSlaveModuleAsync(WizConverter::Module::Enums::MasterModule::Type masterType, int slaveIndex) {
+std::future<void> PWConverterWidget::_createSlaveModuleAsync(WizConverter::Enums::MasterModule::Type masterType, int slaveIndex) {
     return std::async(std::launch::async, [this, masterType, slaveIndex]() {
         // 检查模块是否已经创建
         {
