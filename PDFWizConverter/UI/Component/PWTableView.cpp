@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QHBoxLayout>
 #include <NXLineEdit.h>
+#include <NXMenu.h>
 
 #include "PWHeaderView.h"
 #include "PWTableViewModel.h"
@@ -101,9 +102,134 @@ NXModelIndexWidget* PWTableView::createRangeWidget()
     modelIndexLayout->addWidget(rightLineEdit);
     modelIndexLayout->addStretch();
 
+    // 实时验证（提供即时反馈）
+    QObject::connect(leftLineEdit, &NXLineEdit::textChanged, [this, leftLineEdit, rightLineEdit](const QString& text) {
+        const QModelIndex& index = this->indexAt(viewport()->mapToParent(leftLineEdit->parentWidget()->pos()));
+        if (!index.isValid()) return;
+
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        if (rowData.isRange()) {
+            int leftValue = text.toInt();
+            int rightValue = rightLineEdit->text().toInt();
+            int maxValue = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn).Max;
+
+            if (leftValue > maxValue || leftValue > rightValue) {
+                leftLineEdit->setStyleSheet("border: 1px solid red;");
+            }
+            else {
+                leftLineEdit->setStyleSheet("");
+            }
+        }
+        });
+
+    QObject::connect(rightLineEdit, &NXLineEdit::textChanged, [this, leftLineEdit, rightLineEdit](const QString& text) {
+        const QModelIndex& index = this->indexAt(viewport()->mapToParent(rightLineEdit->parentWidget()->pos()));
+        if (!index.isValid()) return;
+
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        if (rowData.isRange()) {
+            int rightValue = text.toInt();
+            int leftValue = leftLineEdit->text().toInt();
+            int maxValue = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn).Max;
+
+            if (rightValue > maxValue || rightValue < leftValue) {
+                rightLineEdit->setStyleSheet("border: 1px solid red;");
+            }
+            else {
+                rightLineEdit->setStyleSheet("");
+            }
+        }
+        });
+
+    // 连接编辑完成信号
+    QObject::connect(leftLineEdit, &NXLineEdit::editingFinished, [this, leftLineEdit, rightLineEdit]() {
+        const QModelIndex& index = this->indexAt(viewport()->mapToParent(leftLineEdit->parentWidget()->pos()));
+        if (!index.isValid()) return;
+
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        int leftValue = leftLineEdit->text().toInt();
+        int rightValue = rightLineEdit->text().toInt();
+
+        if (rowData.isRange()) {
+            // 获取Range的限制
+            auto& range = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn);
+            int maxValue = range.Max;
+            int originalStart = range.RangeList.front().Start;
+            if (maxValue <= 0 || originalStart == leftValue) return;
+
+            if (leftValue > maxValue) leftValue = maxValue;
+            if (leftValue > rightValue) leftValue = rightValue;
+
+            // 更新显示
+            if (leftLineEdit->text().toInt() != leftValue) {
+                leftLineEdit->setText(QString::number(leftValue));
+            }
+
+            range.RangeList.front().Start = leftValue;
+        }
+        else if (rowData.isSize()) {
+            auto& size = std::get<PWTableViewModel::ImageSizeData>(rowData.SecondColumn);
+            int originalWidth = size.OriginalSize.width();
+            if (leftValue == originalWidth) return;
+
+            size.ResizedSize.setWidth(leftValue);
+        }
+
+        //// 通知模型数据已更改
+        //QModelIndex dataIndex = _pModel->index(index.row(), 2); // 第二列数据
+        //_pModel->dataChanged(dataIndex, dataIndex);
+        });
+
+    QObject::connect(rightLineEdit, &NXLineEdit::editingFinished, [this, leftLineEdit, rightLineEdit]() {
+        const QModelIndex& index = this->indexAt(viewport()->mapToParent(rightLineEdit->parentWidget()->pos()));
+        if (!index.isValid()) return;
+
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        int leftValue = leftLineEdit->text().toInt();
+        int rightValue = rightLineEdit->text().toInt();
+
+        if (rowData.isRange()) {
+            auto& range = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn);
+            int maxValue = range.Max;
+            int originalEnd = range.RangeList.front().End;
+            if (maxValue <= 0 || originalEnd == rightValue) return;
+
+            if (rightValue > maxValue) rightValue = maxValue;
+            if (rightValue < leftValue) rightValue = leftValue;
+
+            if (rightLineEdit->text().toInt() != rightValue) {
+                rightLineEdit->setText(QString::number(rightValue));
+            }
+            range.RangeList.front().End = rightValue;
+        }
+        else if (rowData.isSize()) {
+            auto& size = std::get<PWTableViewModel::ImageSizeData>(rowData.SecondColumn);
+            int originalHeight = size.OriginalSize.height();
+            if (rightValue == originalHeight) return;
+
+            size.ResizedSize.setHeight(rightValue);
+        }
+        });
+
+    // 当widget的index改变时更新显示
+    QObject::connect(modelIndexWidget, &NXModelIndexWidget::indexChanged, [this, leftLineEdit, rightLineEdit](const QModelIndex& index) {
+        if (!index.isValid()) return;
+
+        const PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        if (rowData.isRange()) {
+            const auto& range = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn);
+            leftLineEdit->setText(QString::number(range.RangeList.front().Start));
+            rightLineEdit->setText(QString::number(range.RangeList.front().End));
+        }
+        else if (rowData.isSize()) {
+            const auto& size = std::get<PWTableViewModel::ImageSizeData>(rowData.SecondColumn);
+            leftLineEdit->setText(QString::number(size.OriginalSize.width()));
+            rightLineEdit->setText(QString::number(size.OriginalSize.height()));
+        }
+        });
+
     return modelIndexWidget;
 }
-
 NXModelIndexWidget* PWTableView::createSwitchWidget()
 {
     QPointer<NXModelIndexWidget> modelIndexWidget = new NXModelIndexWidget(this);
@@ -174,7 +300,7 @@ void PWTableView::mouseMoveEvent(QMouseEvent* event)
         QRect textRect = WizConverter::Utils::GetAlignLeft(visualRect(currentIndex), QSize{ columnWidth(currentIndex.column()) - 118, 22 });
         if (textRect.contains(event->pos())) {
             setCursor(Qt::PointingHandCursor);
-            const QString& fileName = qobject_cast<PWTableViewModel*>(model())->getCellData(currentIndex.row(), 1).toString();
+            const QString& fileName = qobject_cast<PWTableViewModel*>(model())->getRowData(currentIndex.row()).FileName;
             PWToolTip::showToolTip(fileName, viewport()->mapToGlobal(textRect.bottomLeft() + QPoint(0, 1)));
         }
         else PWToolTip::hideToolTip();
@@ -189,6 +315,58 @@ void PWTableView::leaveEvent(QEvent* event)
     NXTableView::leaveEvent(event);
 }
 
+void PWTableView::contextMenuEvent(QContextMenuEvent* event)
+{
+    NXMenu* menu = new NXMenu(this);
+    menu->setMenuItemHeight(27);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    QAction* action = nullptr;
+
+    action = menu->addNXIconAction(NXIconType::ArrowUpAZ, tr("按文件名降序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileNameActionTriggered(true);  // 降序
+        });
+
+    action = menu->addNXIconAction(NXIconType::ArrowDownAZ, tr("按文件名升序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileNameActionTriggered(false); // 升序
+        });
+    menu->addSeparator();
+
+    action = menu->addNXIconAction(NXIconType::FileArrowUp, tr("按文件大小降序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileSizeActionTriggered(true);
+        });
+
+    action = menu->addNXIconAction(NXIconType::FileArrowDown, tr("按文件大小升序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileSizeActionTriggered(false);
+        });
+    menu->addSeparator();
+
+    action = menu->addNXIconAction(NXIconType::ClockTwelve, tr("按文件创建时间降序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileBirthTimeActionTriggered(true);
+        });
+
+    action = menu->addNXIconAction(NXIconType::ClockSixThirty, tr("按文件创建时间升序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByFileBirthTimeActionTriggered(false);
+        });
+    menu->addSeparator();
+
+    action = menu->addNXIconAction(NXIconType::ArrowUp19, tr("按总页数或图片大小降序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByRangeOrSizeActionTriggered(true);
+        });
+
+    action = menu->addNXIconAction(NXIconType::ArrowDown19, tr("按总页数或图片大小升序"));
+    QObject::connect(action, &QAction::triggered, _pModel, [this]() {
+        _pModel->onSortByRangeOrSizeActionTriggered(false);
+        });
+
+    menu->popup(event->globalPos());
+}
 void PWTableView::_onTableViewShow()
 {
     for (int i = 0; i < _pColumnWidthList.size(); ++i)

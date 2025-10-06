@@ -5,6 +5,7 @@
 #include "PWDef.h"
 class QStackedWidget;
 class PWTableView;
+class PWTableViewModel;
 class PWTableMaskWidget;
 class PWCentralWidget : public QWidget
 {
@@ -13,6 +14,7 @@ class PWCentralWidget : public QWidget
     Q_PRIVATE_CREATE_D(QStackedWidget*, Layer)
     Q_PRIVATE_CREATE_D(PWTableMaskWidget*, TableMask)
     Q_PRIVATE_CREATE_D(PWTableView*, TableView)
+    Q_PRIVATE_CREATE_D(PWTableViewModel*, TableViewModel)
     Q_PRIVATE_CREATE_EX(const QString&, QString, FileFilter)
     Q_PRIVATE_CREATE_EX(const QString&, QString, FileBereadyState)
 

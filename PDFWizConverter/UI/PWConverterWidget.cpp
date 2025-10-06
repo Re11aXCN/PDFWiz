@@ -256,7 +256,7 @@ void PWConverterWidget::_initButtonComponent(const QJsonObject& buttonConfig)
 
     const auto& masterModuleMap = EnumTraits<MasterModule>::Map;
     // 解析主模块按钮
-    for (auto masterIt = masterModuleMap.begin(); masterIt != masterModuleMap.end()-3; ++masterIt) {
+    for (auto masterIt = masterModuleMap.begin(); masterIt != masterModuleMap.end()-2; ++masterIt) {
         QJsonObject moduleObj = masterModuleComponent[(*masterIt).Name].toObject();
         PWToolButton* masterModuleButton = new PWToolButton(
             moduleObj["buttonText"].toString(),

@@ -27,7 +27,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
-    
+    void contextMenuEvent(QContextMenuEvent* event) override;
     //bool eventFilter(QObject* obj, QEvent* event) override;
 private Q_SLOTS:
     void _onTableViewShow();
