@@ -26,7 +26,7 @@ public:
     };
     struct FileProcessState {
         FileStates State{ FileStateType::LOADING };
-        QString Text{ "加载中" };
+        QString Text{ "" };
     };
     struct ExpandData {
         QString Password{};
@@ -40,7 +40,7 @@ public:
         QString FileName;
         std::variant<RangeData, ImageSizeData> SecondColumn;
         QPointer<NXModelIndexWidget> RangeWidget{ nullptr };
-        FileProcessState FileProcessState{ FileStateType::LOADING, "加载中" };
+        FileProcessState FileProcessState{};
         ExpandData ExpandData;
         // 可选字段 - 仅8列表格有
         std::optional<QPointer<NXModelIndexWidget>> SwitchWidget; // 第四列：SwitchWidget指针（可选）

@@ -25,7 +25,7 @@ void PWHeaderView::paintSection(QPainter* painter, const QRect& rect, int logica
     QHeaderView::paintSection(painter, rect, logicalIndex);
     painter->restore();
 
-    if (logicalIndex == count() - 1)
+    if (logicalIndex == count() - 1 || (logicalIndex == 3 && model()->property("IsGridViewMode").toBool()))
     {
         int height = font().pixelSize();
         QRect iconRect = WizConverter::Utils::GetAlignCenter(
@@ -44,7 +44,7 @@ void PWHeaderView::paintSection(QPainter* painter, const QRect& rect, int logica
 void PWHeaderView::mouseMoveEvent(QMouseEvent* event)
 {
     int section = logicalIndexAt(event->pos());
-    if (section == 0 || section == 1)
+    if (section == 0 || (section == 1 && !model()->property("IsGridViewMode").toBool()))
     {
         int height = font().pixelSize();
         QRect iconRect = WizConverter::Utils::GetAlignLeft(
@@ -57,7 +57,7 @@ void PWHeaderView::mouseMoveEvent(QMouseEvent* event)
             ? parentWidget()->setCursor(Qt::PointingHandCursor)
             : parentWidget()->unsetCursor();
     }
-    else if (section == count() - 1)
+    else if (section == count() - 1 || (section == 3 && model()->property("IsGridViewMode").toBool()))
     {
         int height = font().pixelSize();
         QRect iconRect = WizConverter::Utils::GetAlignCenter(
@@ -98,7 +98,7 @@ void PWHeaderView::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton)
     {
         int section = logicalIndexAt(event->pos());
-        if (section == 0 || section == 1)
+        if (section == 0 || (section == 1 && !model()->property("IsGridViewMode").toBool()))
         {
             int height = font().pixelSize();
             QRect iconRect = WizConverter::Utils::GetAlignLeft(

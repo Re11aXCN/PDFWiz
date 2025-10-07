@@ -10,6 +10,7 @@
 #include "Component/PWTableMaskWidget.h"
 #include "Component/PWTableView.h"
 #include "Component/PWTableViewModel.h"
+#include "Component/PWHeaderView.h"
 using namespace WizConverter::Enums;
 namespace Scope::Utils {
     struct HeaderViewMetadata {
@@ -19,18 +20,18 @@ namespace Scope::Utils {
     static HeaderViewMetadata GetHeaderViewMetadata(MasterModule::Type mType, const QVariant& sType) {
         switch (mType) {
         case MasterModule::Type::PDFToWord: {
-            return { {"", "文件名", "总页数", "转换页面范围", "输出格式", "状态", "操作", "删除"},
+            return { {"", "文件名", "总页数", "转换页面范围", "输出格式", "状态", "操作", ""},
                 { 40, 300, 60, 145, 120, 140, 115, 57 } };
         }
         case MasterModule::Type::WordToPDF: {
             return qvariant_cast<WordToPDF::Type>(sType) == WordToPDF::Type::ImageToPDF
-                ? HeaderViewMetadata{ {"", "文件名", "图片尺寸", "自定义尺寸", "状态", "操作", "删除"},
+                ? HeaderViewMetadata{ {"", "文件名", "图片尺寸", "自定义尺寸", "状态", "操作", ""},
                     { 40, 310, 120, 165, 140, 135, 67 } }
-                : HeaderViewMetadata{ {"", "文件名", "总页数", "转换页面范围", "状态", "操作", "删除"},
+                : HeaderViewMetadata{ {"", "文件名", "总页数", "转换页面范围", "状态", "操作", ""},
                     { 40, 380, 80, 165, 140, 115, 57 } };
         }
         case MasterModule::Type::PDFAction: {
-            QStringList TextList{ "", "文件名", "总页数", "", "状态", "操作", "删除" };
+            QStringList TextList{ "", "文件名", "总页数", "", "状态", "操作", "" };
             switch (qvariant_cast<PDFAction::Type>(sType))
             {
             case PDFAction::Type::PDFSplit:                 TextList[3] = "拆分页面范围"; break;
@@ -48,7 +49,7 @@ namespace Scope::Utils {
                .ColumnWidthList{ 40, 380, 80, 165, 140, 115, 57 } };
         }
         case MasterModule::Type::ImageAction: {
-            QStringList TextList{ "", "文件名", "图片尺寸", "", "状态", "操作", "删除" };
+            QStringList TextList{ "", "文件名", "图片尺寸", "", "状态", "操作", "" };
             switch (qvariant_cast<ImageAction::Type>(sType))
             {
             case ImageAction::Type::PDFToImage:                 TextList[2] = "总页数"; TextList[3] = "转换页面范围"; break;
@@ -69,25 +70,29 @@ namespace Scope::Utils {
         return { {}, {} };
     }
 }
-
 PWCentralWidget::PWCentralWidget(QWidget* parent)
     : QWidget(parent)
 {
     _pLayer = new QStackedWidget(this);
     _pTableMask = new PWTableMaskWidget(this);
     _pTableView = new PWTableView(this);
+    _pTableViewModel = qobject_cast<PWTableViewModel*>(_pTableView->model());
     _pLayer->insertWidget(0, _pTableMask);
     _pLayer->insertWidget(1, _pTableView);
     _pLayer->setCurrentIndex(0);
 
     setObjectName("PWCentralWidget");
-    _pTableViewModel = qobject_cast<PWTableViewModel*>(_pTableView->model());
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(_pLayer);
 
     QObject::connect(_pTableView, &PWTableView::switchClicked, this, &PWCentralWidget::switchToTableView);
     QObject::connect(_pTableMask, &PWTableMaskWidget::pressed, this, &PWCentralWidget::_openFileExplorer);
+    QObject::connect(_pTableViewModel, &PWTableViewModel::rowsRemoved, this, [this]() {
+        if (!_pTableViewModel->rowCount()) {
+            _pLayer->setCurrentIndex(0);
+        }
+        });
     QObject::connect(_pTableViewModel, &PWTableViewModel::rowsInserted, this, [this]() {
         const PWTableViewModel::RowData& rowData = _pTableViewModel->getRowData(0);
         // 表格数据在添加之前已经过滤,确定 文件格式 正确匹配 模块
@@ -100,33 +105,29 @@ PWCentralWidget::PWCentralWidget(QWidget* parent)
         }
         }, Qt::SingleShotConnection);
 
-
-    // test data will be removed in the future
     //QObject::connect(_pTableView, &NXTableView::tableViewShow, this, [this]() {
+        //PWTableViewModel* tableModel = qobject_cast<PWTableViewModel*>(_pTableView->model());
+        //PWTableViewModel::RowData rowData;
+        //rowData.Index = 0;
+        //rowData.Checked = false;
+        //rowData.FileName = "E:/Mozilla-Recovery-Key_2025-07-28_2634544095@qq.com.pdf";
+        //rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 25}}, 25} });
+        //rowData.RangeWidget = _pTableView->createRangeWidget();
+        //rowData.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
+        //rowData.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, _pFileBereadyState };
 
-    //    PWTableViewModel* tableModel = qobject_cast<PWTableViewModel*>(_pTableView->model());
-    //    PWTableViewModel::RowData rowData;
-    //    rowData.Index = 0;
-    //    rowData.Checked = false;
-    //    rowData.FileName = "E:/Mozilla-Recovery-Key_2025-07-28_2634544095@qq.com.pdf";
-    //    rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 25}}, 25} });
-    //    rowData.RangeWidget = _pTableView->createRangeWidget();
-    //    rowData.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
-    //    rowData.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, "准备就绪" };
+        //tableModel->appendRowData(rowData);
 
-    //    tableModel->appendRowData(rowData);
-
-    //    PWTableViewModel::RowData row2;
-    //    row2.Index = 1;
-    //    row2.Checked = true;
-    //    row2.FileName = "E:/Project/小五编码-C++必知必会.doc";
-    //    row2.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
-    //    row2.RangeWidget = _pTableView->createRangeWidget();
-    //    row2.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
-    //    row2.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, "准备就绪" };
-    //    tableModel->appendRowData(row2);
-    //    }, Qt::SingleShotConnection);
-
+        //PWTableViewModel::RowData row2;
+        //row2.Index = 1;
+        //row2.Checked = true;
+        //row2.FileName = "E:/Project/小五编码-C++必知必会.doc";
+        //row2.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
+        //row2.RangeWidget = _pTableView->createRangeWidget();
+        //row2.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
+        //row2.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, _pFileBereadyState };
+        //tableModel->appendRowData(row2);
+        //}, Qt::SingleShotConnection);
 }
 
 PWCentralWidget::~PWCentralWidget()
@@ -141,10 +142,13 @@ void PWCentralWidget::setMask(const QPixmap& mask)
 void PWCentralWidget::setModuleType(WizConverter::Enums::ModuleType ModuleType)
 {
     _pModuleType = ModuleType;
-    auto [headerTextList, columnWidthList] = Scope::Utils::GetHeaderViewMetadata(_pModuleType.MasterModuleType, _pModuleType.SlaveModuleType);
+    auto [textList, columnWidthList] = Scope::Utils::GetHeaderViewMetadata(_pModuleType.MasterModuleType, _pModuleType.SlaveModuleType);
     _pTableView->setModuleType(_pModuleType);
-    _pTableView->setHeaderTextList(headerTextList);
+    _pTableView->setHeaderTextList(textList);
     _pTableView->setColumnWidthList(columnWidthList);
+
+    addFiles({ "C:/Users/Re11a/Pictures/miku01.jpg" });
+    _pLayer->setCurrentIndex(1);
 }
 
 WizConverter::Enums::ModuleType PWCentralWidget::getModuleType() const
@@ -156,16 +160,6 @@ void PWCentralWidget::resizeEvent(QResizeEvent* event)
 {
     _pLayer->setFixedSize(event->size());
     QWidget::resizeEvent(event);
-}
-
-void PWCentralWidget::_openFileExplorer()
-{
-    QStringList fileAbsolutePaths = QFileDialog::getOpenFileNames(this,
-        "选择文件",
-        QDir::homePath(),
-        _pFileFilter);
-    if (fileAbsolutePaths.isEmpty()) return;
-    addFiles(fileAbsolutePaths);
 }
 
 void PWCentralWidget::addFiles(const QStringList& filePaths)
@@ -207,12 +201,13 @@ void PWCentralWidget::addFiles(const QStringList& filePaths)
             rowData.ExpandData = {};
         FOR_END
     }
-    else if (_pModuleType.MasterModuleType == MasterModule::Type::ImageAction 
+    else if (_pModuleType.MasterModuleType == MasterModule::Type::ImageAction
         || qvariant_cast<WordToPDF::Type>(_pModuleType.SlaveModuleType) == WordToPDF::Type::ImageToPDF)
     {
         FOR_START
             QImage image(filePath);
             rowData.setImageSizeData({ .OriginalSize = image.size(), .ResizedSize = image.size() });
+            rowData.RangeWidget = _pTableView->createRangeWidget();
         FOR_END
     }
     else {
@@ -276,3 +271,14 @@ void PWCentralWidget::removeAllNotSelected()
 
     if (!_pTableViewModel->rowCount()) _pLayer->setCurrentIndex(0);
 }
+
+void PWCentralWidget::_openFileExplorer()
+{
+    QStringList fileAbsolutePaths = QFileDialog::getOpenFileNames(this,
+        "选择文件",
+        QDir::homePath(),
+        _pFileFilter);
+    if (fileAbsolutePaths.isEmpty()) return;
+    addFiles(fileAbsolutePaths);
+}
+

@@ -137,6 +137,10 @@ PWConverterWidget::PWConverterWidget(QWidget* parent)
     setWindowButtonFlags(NXAppBarType::StayTopButtonHint | NXAppBarType::MinimizeButtonHint | NXAppBarType::CloseButtonHint);
     
     _initUI();
+
+    _pMasterStackedWidget->setCurrentIndex(static_cast<int>(MasterModule::Type::WordToPDF));
+
+    _pSlaveMetadataMap[MasterModule::Type::WordToPDF].ButtonGroup->button(static_cast<int>(WordToPDF::Type::ImageToPDF))->click();
 }
 
 PWConverterWidget::~PWConverterWidget()
@@ -187,6 +191,14 @@ void PWConverterWidget::dragEnterEvent(QDragEnterEvent* event)
 void PWConverterWidget::dropEvent(QDropEvent* event)
 {
     if (event->mimeData()->hasUrls()) {
+        const QList<QUrl>& urls = event->mimeData()->urls();
+        QStringList filePaths;
+        filePaths.reserve(urls.size());
+        for (const QUrl& url : urls) {
+            filePaths.append(url.toLocalFile());
+        }
+        event->acceptProposedAction();
+        _asyncFilterAndDistributeFiles(static_cast<MasterModule::Type>(_pMasterStackedWidget->currentIndex()), filePaths);
     }
 }
 

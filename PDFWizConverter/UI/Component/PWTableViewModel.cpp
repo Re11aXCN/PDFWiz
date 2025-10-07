@@ -7,7 +7,7 @@
 #include <QFileInfo>
 #include <QDesktopServices>
 #include <NXLineEdit.h>
-
+#include <magic_enum/magic_enum.hpp>
 #include "PWTableView.h"
 #include "PWConverterWidget.h"
 using namespace WizConverter::Enums;
@@ -100,6 +100,23 @@ QVariant PWTableViewModel::data(const QModelIndex& index, int role) const
         return QVariant();
 
     const RowData& rowData = _pRowDataList.at(index.row());
+    if (property("IsGridViewMode").toBool())
+    {
+        switch (role)
+        {
+        case Qt::UserRole: {
+            return rowData.FileName;
+        }
+        case Qt::UserRole + 1: {
+            return property("IsGridViewMode").toBool();
+        }
+        case Qt::UserRole + 2: {
+            if (index.column() == (_isEightColumnTable() ? 5 : 4)) return QVariant::fromValue(rowData.FileProcessState.State);
+            break;
+        }
+        }
+        return QVariant();
+    }
     switch (role)
     {
     case Qt::DisplayRole: {
@@ -124,10 +141,6 @@ QVariant PWTableViewModel::data(const QModelIndex& index, int role) const
         return Qt::AlignCenter;
     }
     case Qt::DecorationPropertyRole: return Qt::AlignCenter;
-    case Qt::UserRole:
-        // 返回原始数据用于其他用途
-        if (index.column() == (_isEightColumnTable() ? 5 : 4)) return QVariant::fromValue(rowData.FileProcessState.State);
-        break;
     }
     return QVariant();
 }
@@ -175,15 +188,19 @@ QVariant PWTableViewModel::headerData(int section, Qt::Orientation orientation, 
         switch (role)
         {
         case Qt::DisplayRole: {
-            if (section == 1 && rowCount() != 0)
-            {
-                return QString("全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(rowCount());
-            }
-            else if (section == columnCount() - 1)
-            {
+            if (property("IsGridViewMode").toBool()) {
+                if (section == 0 && rowCount() != 0) {
+                    return QString("           全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(rowCount());
+                }
                 return QVariant();
             }
-            return _pHeaderTextList.empty() ? QVariant() : _pHeaderTextList.at(section);
+            else {
+                if (section == 1 && rowCount() != 0)
+                {
+                    return QString("全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(rowCount());
+                }
+                return _pHeaderTextList.empty() ? QVariant() : _pHeaderTextList.at(section);
+            }
         }
         case Qt::DecorationRole: {
             if (section == 0) {
@@ -193,10 +210,11 @@ QVariant PWTableViewModel::headerData(int section, Qt::Orientation orientation, 
             }
         }
         case Qt::TextAlignmentRole: {
+            if (property("IsGridViewMode").toBool() && section == 0) return QVariant::fromValue(Qt::AlignLeft | Qt::AlignVCenter);
             if (section == 1) return QVariant::fromValue(Qt::AlignLeft | Qt::AlignVCenter);
         }
         case Qt::ForegroundRole: {
-            if (section == columnCount() - 1) return QColor(0x19, 0x67, 0xC0);
+            if (section == columnCount() - 1 || property("IsGridViewMode").toBool()) return QColor(0x19, 0x67, 0xC0);
         }
         default: break;
         }
@@ -748,7 +766,6 @@ void PWTableViewModel::onSortByRangeOrSizeActionTriggered(bool descending)
     _performSort(compareFunc);
 }
 
-
 QVariant PWTableViewModel::_formatRowData(const RowData& rowData, int column) const
 {
     const QString& headerText = _pHeaderTextList.at(column);
@@ -873,8 +890,8 @@ void PWTableViewModel::_updateResetActionAllRowData()
             QSignalBlocker blocker1(lineEdits[0]);
             QSignalBlocker blocker2(lineEdits[1]);
             const auto& size = std::get<ImageSizeData>(rowData.SecondColumn);
-            lineEdits.front()->setText(QString::number(size.OriginalSize.width()));
-            lineEdits.back() ->setText(QString::number(size.OriginalSize.height()));
+            lineEdits.front()->setText(QString::number(size.ResizedSize.width()));
+            lineEdits.back() ->setText(QString::number(size.ResizedSize.height()));
         }
         QModelIndex rangeIndex = createIndex(row, 3);
         _pTableView->setIndexWidget(rangeIndex, rangeWidget);

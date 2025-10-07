@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <NXLineEdit.h>
 #include <NXMenu.h>
+#include <NXToggleSwitch.h>
 
 #include "PWHeaderView.h"
 #include "PWTableViewModel.h"
@@ -30,6 +31,7 @@ namespace Scope::Utils {
         return lineEdit;
     }
 }
+using namespace WizConverter::Enums;
 PWTableView::PWTableView(QWidget* parent)
     : NXTableView(parent)
 {
@@ -51,7 +53,7 @@ PWTableView::PWTableView(QWidget* parent)
 
     adjustHeaderColumnIconRect({ { 0, {2, -8, 10, 10} } });
 
-    QObject::connect(this, &NXTableView::tableViewShow, this,  &PWTableView::_onTableViewShow);
+    QObject::connect(this, &NXTableView::tableViewShow, this,  &PWTableView::_onTableViewShow, Qt::SingleShotConnection);
     QObject::connect(this, &PWTableView::checkIconClicked, _pModel,  &PWTableViewModel::onSelectSingleRow);
     QObject::connect(_pHeaderView, &PWHeaderView::selectAllRows, _pModel, &PWTableViewModel::onSelectAllRows);
     QObject::connect(_pHeaderView, &PWHeaderView::removeSelectedRows, _pModel, &PWTableViewModel::onRemoveSelectedRows);
@@ -60,6 +62,39 @@ PWTableView::PWTableView(QWidget* parent)
 
 PWTableView::~PWTableView()
 {
+}
+
+void PWTableView::setModuleType(WizConverter::Enums::ModuleType moduleType)
+{
+    _pModuleType = moduleType;
+    if ((_pModuleType.MasterModuleType == MasterModule::Type::ImageAction && qvariant_cast<ImageAction::Type>(_pModuleType.SlaveModuleType) != ImageAction::Type::PDFToImage)
+        || qvariant_cast<WordToPDF::Type>(_pModuleType.SlaveModuleType) == WordToPDF::Type::ImageToPDF) {
+        std::call_once(_pOnceFlag, [this]() {
+            NXToggleSwitch* toggleSwitchButton = new NXToggleSwitch(this);
+            toggleSwitchButton->setCursor(Qt::PointingHandCursor);
+            toggleSwitchButton->setToolTip("显示图片");
+            toggleSwitchButton->setIsToggled(false);
+            toggleSwitchButton->setVisible(true);
+            toggleSwitchButton->move(300, 10);
+
+            QObject::connect(toggleSwitchButton, &NXToggleSwitch::toggled, this, [toggleSwitchButton, this](bool checked) {
+                Q_EMIT hideModelIndexWidget(checked);
+                _pModel->setProperty("IsGridViewMode", checked);
+                _updateViewMode();
+                toggleSwitchButton->setToolTip(checked ? "切换到列表视图" : "切换到网格视图");
+                if (checked) {
+                    QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, [this]() {
+                        Q_EMIT hideModelIndexWidget(true);
+                        });
+                }
+                });
+            });
+    }
+}
+
+WizConverter::Enums::ModuleType PWTableView::getModuleType() const
+{
+    return _pModuleType;
 }
 
 void PWTableView::setHeaderTextList(const QStringList& headerTextList)
@@ -227,7 +262,15 @@ NXModelIndexWidget* PWTableView::createRangeWidget()
             rightLineEdit->setText(QString::number(size.OriginalSize.height()));
         }
         });
-
+    
+    QObject::connect(this, &PWTableView::hideModelIndexWidget, modelIndexWidget, [modelIndexWidget](bool hide) {
+        for (const auto& child : modelIndexWidget->children()) {
+            if (auto* widget = qobject_cast<QWidget*>(child)) {
+                widget->setVisible(!hide);
+            }
+        }
+        modelIndexWidget->setVisible(!hide);
+        });
     return modelIndexWidget;
 }
 NXModelIndexWidget* PWTableView::createSwitchWidget()
@@ -260,7 +303,7 @@ void PWTableView::paintEvent(QPaintEvent* event)
 
 void PWTableView::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (selectionBehavior() == QAbstractItemView::SelectRows && event->button() == Qt::LeftButton)
+    if (selectionBehavior() == QAbstractItemView::SelectRows && event->button() == Qt::LeftButton && !model()->property("IsGridViewMode").toBool())
     {
         const QModelIndex& currentIndex = indexAt(event->pos());
         if (currentIndex.column() == 0)
@@ -285,26 +328,29 @@ void PWTableView::mouseReleaseEvent(QMouseEvent* event)
 
 void PWTableView::mouseMoveEvent(QMouseEvent* event)
 {
-    unsetCursor();
-    const QModelIndex& currentIndex = indexAt(event->pos());
-    if (currentIndex.column() == 0)
-    {
-        QRect iconRect = WizConverter::Utils::GetAlignLeft(visualRect(currentIndex), TABLE_VIEW_CHECKICON_SIZE);
-        iconRect.adjust(TABLE_VIEW_CHECKICON_ADJUST);
-        if (iconRect.contains(event->pos())) {
-            setCursor(Qt::PointingHandCursor);
+    if (!model()->property("IsGridViewMode").toBool()) {
+        unsetCursor();
+        const QModelIndex& currentIndex = indexAt(event->pos());
+        if (currentIndex.column() == 0)
+        {
+            QRect iconRect = WizConverter::Utils::GetAlignLeft(visualRect(currentIndex), TABLE_VIEW_CHECKICON_SIZE);
+            iconRect.adjust(TABLE_VIEW_CHECKICON_ADJUST);
+            if (iconRect.contains(event->pos())) {
+                setCursor(Qt::PointingHandCursor);
+            }
+            PWToolTip::hideToolTip();
         }
-        PWToolTip::hideToolTip();
-    }
-    else if (currentIndex.column() == 1) {
-        QRect textRect = WizConverter::Utils::GetAlignLeft(visualRect(currentIndex), QSize{ columnWidth(currentIndex.column()) - 118, 22 });
-        if (textRect.contains(event->pos())) {
-            setCursor(Qt::PointingHandCursor);
-            const QString& fileName = qobject_cast<PWTableViewModel*>(model())->getRowData(currentIndex.row()).FileName;
-            PWToolTip::showToolTip(fileName, viewport()->mapToGlobal(textRect.bottomLeft() + QPoint(0, 1)));
+        else if (currentIndex.column() == 1) {
+            QRect textRect = WizConverter::Utils::GetAlignLeft(visualRect(currentIndex), QSize{ columnWidth(currentIndex.column()) - 118, 22 });
+            if (textRect.contains(event->pos())) {
+                setCursor(Qt::PointingHandCursor);
+                const QString& fileName = qobject_cast<PWTableViewModel*>(model())->getRowData(currentIndex.row()).FileName;
+                PWToolTip::showToolTip(fileName, viewport()->mapToGlobal(textRect.bottomLeft() + QPoint(0, 1)));
+            }
+            else PWToolTip::hideToolTip();
         }
-        else PWToolTip::hideToolTip();
     }
+    
     NXTableView::mouseMoveEvent(event);
 }
 
@@ -373,9 +419,51 @@ void PWTableView::_onTableViewShow()
     {
         setColumnWidth(i, _pColumnWidthList[i]);
     }
-    PWTableViewIconDelegate* iconDelegate = new PWTableViewIconDelegate(this);
-    setItemDelegateForColumn(_pColumnWidthList.size() - 2, iconDelegate);
-    setItemDelegateForColumn(_pColumnWidthList.size() - 1, iconDelegate);
-    QObject::connect(iconDelegate, &PWTableViewIconDelegate::iconClicked, _pModel, &PWTableViewModel::onDelegateIconClicked);
+    _pIconDelegate = new PWTableViewIconDelegate(this);
+    setItemDelegateForColumn(_pColumnWidthList.size() - 2, _pIconDelegate);
+    setItemDelegateForColumn(_pColumnWidthList.size() - 1, _pIconDelegate);
+    QObject::connect(_pIconDelegate, &PWTableViewIconDelegate::iconClicked, _pModel, &PWTableViewModel::onDelegateIconClicked);
+}
+
+void PWTableView::_updateViewMode()
+{
+    if (_pModel->property("IsGridViewMode").toBool()) {
+        int i = 0;
+        for ( ;  i < 4; ++i) {
+            setColumnWidth(i, 244);
+            setItemDelegateForColumn(i, _pIconDelegate);
+        }
+        for (; i < _pColumnWidthList.size(); ++i) setItemDelegateForColumn(i, nullptr);
+        setIsHoverEffectsEnabled(false);
+        setIsSelectionEffectsEnabled(false);
+        setAlternatingRowColors(false);
+        setAcceptDrops(true);
+        setDropIndicatorShown(true);
+        setDragEnabled(true);
+        setDragDropMode(QAbstractItemView::InternalMove);
+        setSelectionBehavior(QAbstractItemView::SelectItems);
+        //setSelectionMode(QAbstractItemView::MultiSelection);
+        verticalHeader()->setDefaultSectionSize(145);
+    }
+    else {
+        for (int i = 0; i < _pColumnWidthList.size(); ++i) {
+            setColumnWidth(i, _pColumnWidthList[i]);
+            setItemDelegateForColumn(i, nullptr);
+        }
+        setItemDelegateForColumn(_pColumnWidthList.size() - 2, _pIconDelegate);
+        setItemDelegateForColumn(_pColumnWidthList.size() - 1, _pIconDelegate);
+        setIsHoverEffectsEnabled(true);
+        setIsSelectionEffectsEnabled(true);
+        setAlternatingRowColors(true);
+        setAcceptDrops(false);
+        setDropIndicatorShown(false);
+        setDragEnabled(false);
+        setDragDropMode(QAbstractItemView::NoDragDrop);
+        setSelectionBehavior(QAbstractItemView::SelectRows);
+        setSelectionMode(QAbstractItemView::SingleSelection);
+        verticalHeader()->setDefaultSectionSize(50);
+    }
+
+    viewport()->update();
 }
 
