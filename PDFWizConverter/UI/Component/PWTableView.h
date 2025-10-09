@@ -12,6 +12,8 @@ class PWTableView : public NXTableView {
     Q_PRIVATE_CREATE_D(PWTableViewModel*, Model)
     Q_PRIVATE_CREATE_D(PWTableViewIconDelegate*, IconDelegate)
     Q_PRIVATE_CREATE_D(QList<int>, ColumnWidthList)
+    Q_PRIVATE_CREATE_D(int, GridRowsPerPage)  // 网格模式下每页显示的行数
+    Q_PRIVATE_CREATE_D(int, ItemsPerRow)      // 每行显示的item数量
     Q_PRIVATE_CREATE_D(WizConverter::Enums::ModuleType, ModuleType)
     Q_PRIVATE_CREATE_Q_H(WizConverter::Enums::ModuleType, ModuleType)
 public:
@@ -32,11 +34,15 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     //bool eventFilter(QObject* obj, QEvent* event) override;
 private :
     void _onTableViewShow();
-    void _updateViewMode();
 
+    // 网格模式下滚动条更新
+    void _updateGridViewScrollBar();
+    int _calculateGridRowsPerPage() const;
+    int _calculateGridTotalRows() const;
 private:
     inline static std::once_flag _pOnceFlag;
 };

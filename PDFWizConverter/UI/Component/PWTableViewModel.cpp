@@ -189,15 +189,15 @@ QVariant PWTableViewModel::headerData(int section, Qt::Orientation orientation, 
         {
         case Qt::DisplayRole: {
             if (property("IsGridViewMode").toBool()) {
-                if (section == 0 && rowCount() != 0) {
-                    return QString("           全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(rowCount());
+                if (section == 0 && _pRowDataList.size() != 0) {
+                    return QString("           全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(_pRowDataList.size());
                 }
-                return QVariant();
+                return _pHeaderTextList.empty() ? QVariant() : _pHeaderTextList.at(section);
             }
             else {
-                if (section == 1 && rowCount() != 0)
+                if (section == 1 && _pRowDataList.size() != 0)
                 {
-                    return QString("全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(rowCount());
+                    return QString("全选      已选中(%1/%2)").arg(_pCheckedRowCount).arg(_pRowDataList.size());
                 }
                 return _pHeaderTextList.empty() ? QVariant() : _pHeaderTextList.at(section);
             }
@@ -205,7 +205,7 @@ QVariant PWTableViewModel::headerData(int section, Qt::Orientation orientation, 
         case Qt::DecorationRole: {
             if (section == 0) {
                 if (_pCheckedRowCount == 0) return _pCheckIconList.at(Qt::Unchecked);
-                else if (_pCheckedRowCount < rowCount()) return _pCheckIconList.at(Qt::PartiallyChecked);
+                else if (_pCheckedRowCount < _pRowDataList.size()) return _pCheckIconList.at(Qt::PartiallyChecked);
                 else return _pCheckIconList.at(Qt::Checked);
             }
         }
@@ -231,6 +231,11 @@ bool PWTableViewModel::setHeaderData(int section, Qt::Orientation orientation, c
 void PWTableViewModel::setHeaderTextList(const QStringList& headerTextList)
 {
     _pHeaderTextList = headerTextList;
+}
+
+QStringList PWTableViewModel::getHeaderTextList() const
+{
+    return _pHeaderTextList;
 }
 
 void PWTableViewModel::setRowData(const QList<RowData>& rowDataList)
@@ -530,6 +535,17 @@ void PWTableViewModel::updateRowSize(int row, const ImageSizeData& size)
     _pRowDataList[row].setImageSizeData(size);
     QModelIndex index = createIndex(row, 2);
     Q_EMIT dataChanged(index, index);
+}
+
+void PWTableViewModel::resetRemoveIndexWidgits()
+{
+    beginResetModel();
+    endResetModel();
+}
+
+void PWTableViewModel::resetRecoverIndexWidgits()
+{
+    _updateResetActionAllRowData();
 }
 
 void PWTableViewModel::onSelectSingleRow(const QModelIndex& index)

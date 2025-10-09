@@ -34,6 +34,8 @@ namespace Scope::Utils {
 using namespace WizConverter::Enums;
 PWTableView::PWTableView(QWidget* parent)
     : NXTableView(parent)
+    , _pGridRowsPerPage{ 2 }
+    , _pItemsPerRow{ 4 }
 {
     _pHeaderView = new PWHeaderView(Qt::Horizontal, this);
     _pModel = new PWTableViewModel(this);
@@ -77,16 +79,70 @@ void PWTableView::setModuleType(WizConverter::Enums::ModuleType moduleType)
             toggleSwitchButton->setVisible(true);
             toggleSwitchButton->move(300, 10);
 
-            QObject::connect(toggleSwitchButton, &NXToggleSwitch::toggled, this, [toggleSwitchButton, this](bool checked) {
+            QObject::connect(toggleSwitchButton, &NXToggleSwitch::toggled, this,
+                [toggleSwitchButton, this](bool checked) {
                 Q_EMIT hideModelIndexWidget(checked);
                 _pModel->setProperty("IsGridViewMode", checked);
-                _updateViewMode();
-                toggleSwitchButton->setToolTip(checked ? "切换到列表视图" : "切换到网格视图");
-                if (checked) {
-                    QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, [this]() {
-                        Q_EMIT hideModelIndexWidget(true);
-                        });
+                if (_pModel->property("IsGridViewMode").toBool()) {
+                    _pModel->resetRemoveIndexWidgits();
+                    setIsHoverEffectsEnabled(false);
+                    setIsSelectionEffectsEnabled(false);
+                    setAlternatingRowColors(false);
+                    setAcceptDrops(true);
+                    setDropIndicatorShown(true);
+                    setDragEnabled(true);
+                    setDragDropMode(QAbstractItemView::InternalMove);
+                    setSelectionBehavior(QAbstractItemView::SelectItems);
+                    setSelectionMode(QAbstractItemView::MultiSelection);
+                    verticalHeader()->setDefaultSectionSize(145);
+                    setHeaderTextList({ "","","","" });
+                    _pModel->layoutChanged();
+
+                    for (int i = 0; i < 4; ++i) {
+                        setColumnWidth(i, 244);
+                        setItemDelegateForColumn(i, _pIconDelegate);
+                    }
                 }
+                else {
+                    _pModel->resetRecoverIndexWidgits();
+                    setIsHoverEffectsEnabled(true);
+                    setIsSelectionEffectsEnabled(true);
+                    setAlternatingRowColors(true);
+                    setAcceptDrops(false);
+                    setDropIndicatorShown(false);
+                    setDragEnabled(false);
+                    setDragDropMode(QAbstractItemView::NoDragDrop);
+                    setSelectionBehavior(QAbstractItemView::SelectRows);
+                    setSelectionMode(QAbstractItemView::SingleSelection);
+                    verticalHeader()->setDefaultSectionSize(50);
+                    verticalScrollBar()->setRange(0, _pModel->rowCount() * 50);
+                    setHeaderTextList(_pModel->property("HeaderTextList").toStringList());
+                    _pModel->layoutChanged();
+
+                    int i = 0;
+                    for ( ; i < _pColumnWidthList.size(); ++i) {
+                        setColumnWidth(i, _pColumnWidthList[i]);
+                        setItemDelegateForColumn(i, nullptr);
+                    }
+                    setItemDelegateForColumn(_pColumnWidthList.size() - 2, _pIconDelegate);
+                    setItemDelegateForColumn(_pColumnWidthList.size() - 1, _pIconDelegate);
+                    
+                }
+                toggleSwitchButton->setToolTip(checked ? "切换到列表视图" : "切换到网格视图");
+                static std::once_flag hideModelIndexWidgetFlag;
+                std::call_once(hideModelIndexWidgetFlag, [this]() {
+                    QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, this, [this]() {
+                        if(_pModel->property("IsGridViewMode").toBool())
+                            _pModel->resetRemoveIndexWidgits();
+                        this->_updateGridViewScrollBar();
+                        });
+                    QObject::connect(_pModel, &QAbstractItemModel::rowsRemoved, this, &PWTableView::_updateGridViewScrollBar);
+                    //QObject::connect(_pModel, &QAbstractItemModel::modelReset, this, &PWTableView::_updateGridViewScrollBar);
+                    //QObject::connect(_pModel, &QAbstractItemModel::layoutChanged, this, &PWTableView::_updateGridViewScrollBar);
+                    /*QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, [this]() {
+                        Q_EMIT hideModelIndexWidget(true);
+                        });*/
+                    });
                 });
             });
     }
@@ -263,14 +319,14 @@ NXModelIndexWidget* PWTableView::createRangeWidget()
         }
         });
     
-    QObject::connect(this, &PWTableView::hideModelIndexWidget, modelIndexWidget, [modelIndexWidget](bool hide) {
+    /*QObject::connect(this, &PWTableView::hideModelIndexWidget, modelIndexWidget, [modelIndexWidget](bool hide) {
         for (const auto& child : modelIndexWidget->children()) {
             if (auto* widget = qobject_cast<QWidget*>(child)) {
                 widget->setVisible(!hide);
             }
         }
         modelIndexWidget->setVisible(!hide);
-        });
+        });*/
     return modelIndexWidget;
 }
 NXModelIndexWidget* PWTableView::createSwitchWidget()
@@ -413,8 +469,21 @@ void PWTableView::contextMenuEvent(QContextMenuEvent* event)
 
     menu->popup(event->globalPos());
 }
+
+void PWTableView::resizeEvent(QResizeEvent* event)
+{
+    NXTableView::resizeEvent(event);
+    /*
+    if (_pModel->property("IsGridViewMode").toBool()) {
+        // 重新计算每页显示行数并更新滚动条
+        _pGridRowsPerPage = _calculateGridRowsPerPage();
+        _updateGridViewScrollBar();
+    }*/
+}
+
 void PWTableView::_onTableViewShow()
 {
+    _pModel->setProperty("HeaderTextList", _pModel->getHeaderTextList());
     for (int i = 0; i < _pColumnWidthList.size(); ++i)
     {
         setColumnWidth(i, _pColumnWidthList[i]);
@@ -425,45 +494,50 @@ void PWTableView::_onTableViewShow()
     QObject::connect(_pIconDelegate, &PWTableViewIconDelegate::iconClicked, _pModel, &PWTableViewModel::onDelegateIconClicked);
 }
 
-void PWTableView::_updateViewMode()
+void PWTableView::_updateGridViewScrollBar()
 {
-    if (_pModel->property("IsGridViewMode").toBool()) {
-        int i = 0;
-        for ( ;  i < 4; ++i) {
-            setColumnWidth(i, 244);
-            setItemDelegateForColumn(i, _pIconDelegate);
-        }
-        for (; i < _pColumnWidthList.size(); ++i) setItemDelegateForColumn(i, nullptr);
-        setIsHoverEffectsEnabled(false);
-        setIsSelectionEffectsEnabled(false);
-        setAlternatingRowColors(false);
-        setAcceptDrops(true);
-        setDropIndicatorShown(true);
-        setDragEnabled(true);
-        setDragDropMode(QAbstractItemView::InternalMove);
-        setSelectionBehavior(QAbstractItemView::SelectItems);
-        //setSelectionMode(QAbstractItemView::MultiSelection);
-        verticalHeader()->setDefaultSectionSize(145);
-    }
-    else {
-        for (int i = 0; i < _pColumnWidthList.size(); ++i) {
-            setColumnWidth(i, _pColumnWidthList[i]);
-            setItemDelegateForColumn(i, nullptr);
-        }
-        setItemDelegateForColumn(_pColumnWidthList.size() - 2, _pIconDelegate);
-        setItemDelegateForColumn(_pColumnWidthList.size() - 1, _pIconDelegate);
-        setIsHoverEffectsEnabled(true);
-        setIsSelectionEffectsEnabled(true);
-        setAlternatingRowColors(true);
-        setAcceptDrops(false);
-        setDropIndicatorShown(false);
-        setDragEnabled(false);
-        setDragDropMode(QAbstractItemView::NoDragDrop);
-        setSelectionBehavior(QAbstractItemView::SelectRows);
-        setSelectionMode(QAbstractItemView::SingleSelection);
-        verticalHeader()->setDefaultSectionSize(50);
+    if (!_pModel->property("IsGridViewMode").toBool()) {
+        // 非网格模式，恢复默认滚动条逻辑
+        //verticalScrollBar()->setRange(0, 1); // 让QTableView自动管理
+        //verticalScrollBar()->setRange(0, 10);
+
+        return;
     }
 
-    viewport()->update();
+    int totalRows = _calculateGridTotalRows();
+    if (totalRows <= _pGridRowsPerPage) {
+        verticalScrollBar()->setMaximum(145);
+    }
+    else {
+        int scrollableRows = totalRows - _pGridRowsPerPage;
+        verticalScrollBar()->setMaximum(scrollableRows * 145);
+    }
+}
+
+int PWTableView::_calculateGridRowsPerPage() const
+{
+    if (!_pModel->property("IsGridViewMode").toBool()) {
+        return 0;
+    }
+
+    int viewportHeight = viewport()->height();
+    int rowHeight = verticalHeader()->defaultSectionSize();
+
+    if (rowHeight <= 0) {
+        return _pGridRowsPerPage; // 使用默认值
+    }
+
+    return viewportHeight / rowHeight;
+}
+
+int PWTableView::_calculateGridTotalRows() const
+{
+    if (!_pModel->property("IsGridViewMode").toBool()) {
+        return _pModel->rowCount();
+    }
+
+    int totalItems = _pModel->rowCount();
+    // 计算总行数：ceil(totalItems / itemsPerRow)
+    return (totalItems + _pItemsPerRow - 1) / _pItemsPerRow;
 }
 

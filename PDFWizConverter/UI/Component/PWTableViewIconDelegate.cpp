@@ -3,10 +3,16 @@
 #include <QMouseEvent>
 #include <QHeaderView>
 #include <QDesktopServices>
+#include <QImageReader>
+#include <QFileInfo>
 #include <NXTheme.h>
+#include <absl/strings/str_cat.h>
 
 #include "PWUtils.h"
 #include "PWTableView.h"
+#include "PWToolTip.h"
+
+constexpr std::size_t buffer_size = std::numeric_limits<int>::digits10 + 2;
 
 PWTableViewIconDelegate::PWTableViewIconDelegate(QObject* parent)
     : QStyledItemDelegate{ parent }
@@ -208,10 +214,6 @@ bool PWTableViewIconDelegate::_handleGridViewEditorEvent(QEvent* event, const QS
         imageRect.top() - _pCircleXImage.height() / 2,
         _pCircleXImage.width(),
         _pCircleXImage.height());
-    QRect textRect(option.rect.x() + 35,
-        option.rect.y() + 120,
-        option.rect.width() - 70,
-        25);
     auto* tableView = const_cast<PWTableView*>(widget);
     switch (event->type()) {
     case QEvent::MouseButtonRelease: {
@@ -231,11 +233,9 @@ bool PWTableViewIconDelegate::_handleGridViewEditorEvent(QEvent* event, const QS
         break;
     }
     case QEvent::MouseMove: {
-        if (buttonRect.contains(localMousePos) || WizConverter::Utils::GetAlignCenter(targetRect, _pDoubleClickHintImage.size()).contains(localMousePos)) {
+        if (bool isMouseOver = WizConverter::Utils::GetAlignCenter(targetRect, _pDoubleClickHintImage.size()).contains(localMousePos) || buttonRect.contains(localMousePos)) {
             widget->viewport()->setCursor(Qt::PointingHandCursor);
-        }
-        else if (textRect.contains(localMousePos)) {
-            tableView->setToolTip(model->index(listViewRowIndex, 0).data(Qt::UserRole).toString());
+            if(isMouseOver) tableView->setToolTip(_formatFileInfo(model->index(listViewRowIndex, 0).data(Qt::UserRole).toString()));
         }
         else {
             tableView->setToolTip("");
@@ -245,6 +245,7 @@ bool PWTableViewIconDelegate::_handleGridViewEditorEvent(QEvent* event, const QS
     }
     case QEvent::Leave: {
         tableView->setToolTip("");
+        widget->viewport()->unsetCursor();
         break;
     }
     }
@@ -303,4 +304,35 @@ QList<QRect> PWTableViewIconDelegate::_getIconCellRects(const QStyleOptionViewIt
         isSecondLastColumn ? option.rect.adjusted(10, 0, -10, 0) : option.rect,
         iconCount
     );
+}
+
+QString PWTableViewIconDelegate::_formatFileInfo(const QString& fileName) const
+{
+    QImageReader imageReader(fileName);
+    if (!imageReader.canRead()) return fileName + " (文件不存在或无法读取)";
+    std::array<char, buffer_size> buffer;
+    QFileInfo fileInfo(fileName);
+    const QSize& imageSize = imageReader.size();
+    auto result1 = std::to_chars(buffer.data(), buffer.data() + buffer.size(), imageSize.width(), 10);
+    std::string str1(buffer.data(), result1.ptr);
+    auto result2 = std::to_chars(result1.ptr, buffer.data() + buffer.size(), imageSize.height(), 10);
+    std::string str2(result1.ptr, result2.ptr);
+    qint64 fileSize = fileInfo.size();
+    QString sizeStr;
+    if (fileSize < 1024) {
+        sizeStr = QString::number(fileInfo.size(), 'f', 2) + " 字节";
+    }
+    else if (fileSize < 1024 * 1024) {
+        sizeStr = QString::number(fileSize / 1024.0, 'f', 2) + " KB";
+    }
+    else {
+        sizeStr = QString::number(fileSize / 1024.0 / 1024.0, 'f', 2) + " MB";
+    }
+    return QString::fromStdString(absl::StrCat("<div style='font-family: Arial, sans-serif;'>",
+        "<p><strong>文件：</strong>",
+        fileName.toStdString(),
+        "</p><p><strong>图片尺寸：</strong>",
+        str1, " x ", str2, " 像素</p><p><strong>文件大小：</strong>",
+        sizeStr.toStdString(), "</p><p><strong>文件创建时间：</strong>",
+        fileInfo.birthTime().toString("yyyy-MM-dd hh:mm:ss").toStdString(), "</p></div>"));
 }

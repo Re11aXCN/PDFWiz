@@ -37,7 +37,7 @@ private:
     // 工具方法
     QPoint _getAdjustedMousePosition(const QStyleOptionViewItem& option) const;
     QList<QRect> _getIconCellRects(const QStyleOptionViewItem& option, const PWTableView* widget, const QModelIndex& index) const;
-
+    QString _formatFileInfo(const QString& fileName) const;
 private:
     inline static std::once_flag _pOnceFlag;
     inline static QSize _pIconSize;

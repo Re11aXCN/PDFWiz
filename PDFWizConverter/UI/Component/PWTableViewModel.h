@@ -80,6 +80,7 @@ public:
         int role = Qt::EditRole) override;
 
     void setHeaderTextList(const QStringList& headerTextList);
+    QStringList getHeaderTextList() const;
 
     void setRowData(const QList<RowData>& rowDataList);
     void setRowData(QList<RowData>&& rowDataList);
@@ -108,6 +109,9 @@ public:
     void updateRowState(int row, FileStateType state, const QString& text = "");
     void updateRowRangeData(int row, const RangeData& range);
     void updateRowSize(int row, const ImageSizeData& size);
+
+    void resetRemoveIndexWidgits();
+    void resetRecoverIndexWidgits();
 public Q_SLOTS:
     void onSelectSingleRow(const QModelIndex& index);
     void onSelectAllRows();
