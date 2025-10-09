@@ -71,6 +71,15 @@ public:
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+    Qt::DropActions supportedDropActions() const override;
+    Qt::DropActions supportedDragActions() const override;
+    QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
+
+    QStringList mimeTypes() const override;
+    bool canDropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) const override;
+    
     QVariant data(const QModelIndex& index, int role) const override;
     bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole);
 
@@ -124,13 +133,14 @@ public Q_SLOTS:
     void onSortByFileSizeActionTriggered(bool descending);
     void onSortByFileBirthTimeActionTriggered(bool descending);
     void onSortByRangeOrSizeActionTriggered(bool descending);
-
+    void onSwapRows(int row1, int row2);
 private:
     QVariant _formatRowData(const RowData& rowData, int column) const;
     void _updataCellIndexWidget(int row, int column);
     void _updateIRActionRowDataFrom(int startRow);
     void _updateIRActionAllRowData();
     void _updateResetActionAllRowData();
+    void _updateMoveActionAllRowData(int fromRow, int toRow);
 
     void _setupWidgetForNewRow(int row, RowData& rowData);
     void _performSort(const std::function<bool(const RowData&, const RowData&)>& compareFunc);

@@ -104,30 +104,6 @@ PWCentralWidget::PWCentralWidget(QWidget* parent)
             _pTableView->adjustColummTextRect({ {1, {0, 0, 0, 0}},{2, {0, 0, -12, 0}} });
         }
         }, Qt::SingleShotConnection);
-
-    //QObject::connect(_pTableView, &NXTableView::tableViewShow, this, [this]() {
-        //PWTableViewModel* tableModel = qobject_cast<PWTableViewModel*>(_pTableView->model());
-        //PWTableViewModel::RowData rowData;
-        //rowData.Index = 0;
-        //rowData.Checked = false;
-        //rowData.FileName = "E:/Mozilla-Recovery-Key_2025-07-28_2634544095@qq.com.pdf";
-        //rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 25}}, 25} });
-        //rowData.RangeWidget = _pTableView->createRangeWidget();
-        //rowData.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
-        //rowData.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, _pFileBereadyState };
-
-        //tableModel->appendRowData(rowData);
-
-        //PWTableViewModel::RowData row2;
-        //row2.Index = 1;
-        //row2.Checked = true;
-        //row2.FileName = "E:/Project/小五编码-C++必知必会.doc";
-        //row2.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
-        //row2.RangeWidget = _pTableView->createRangeWidget();
-        //row2.SwitchWidget = _pTableView->createSwitchWidget(); // 8列表格特有
-        //row2.FileProcessState = PWTableViewModel::FileProcessState{ FileStateType::BEREADY, _pFileBereadyState };
-        //tableModel->appendRowData(row2);
-        //}, Qt::SingleShotConnection);
 }
 
 PWCentralWidget::~PWCentralWidget()
@@ -147,7 +123,11 @@ void PWCentralWidget::setModuleType(WizConverter::Enums::ModuleType ModuleType)
     _pTableView->setHeaderTextList(textList);
     _pTableView->setColumnWidthList(columnWidthList);
 
-    addFiles({ "C:/Users/Re11a/Pictures/miku01.jpg" });
+    //addFiles({ "C:/Users/Re11a/Pictures/miku01.jpg" });
+    //addFiles({ "C:/Users/Re11a/Pictures/miku02.jpg" });
+    //addFiles({ "C:/Users/Re11a/Pictures/miku03.jpg" });
+    //if (_pModuleType.MasterModuleType == MasterModule::Type::PDFAction)
+    //addFiles({ "E:/Project/graduation/PDFWizExamples/Examples/PDF2MD/S1. 概述.pdf" });
     _pLayer->setCurrentIndex(1);
 }
 
@@ -179,36 +159,46 @@ void PWCentralWidget::addFiles(const QStringList& filePaths)
         });
     QList<PWTableViewModel::RowData> rowDataList;
     rowDataList.reserve(filePaths.size());
-    if (_pModuleType.MasterModuleType == MasterModule::Type::PDFToWord)
-    {
-        FOR_START
-            // TODO: CALL C# TO GET PAGE COUNT
-            rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
-            rowData.RangeWidget = _pTableView->createRangeWidget();
-            rowData.SwitchWidget = _pTableView->createSwitchWidget();
-            // TODO: CALL C# TO SAVA PASSWORD ISHASIMAGE
-            rowData.ExpandData = {};
-        FOR_END
-    }
-    else if(_pModuleType.MasterModuleType == MasterModule::Type::PDFAction
+    if (_pModuleType.MasterModuleType == MasterModule::Type::PDFToWord
         || qvariant_cast<ImageAction::Type>(_pModuleType.SlaveModuleType) == ImageAction::Type::PDFToImage)
     {
         FOR_START
             // TODO: CALL C# TO GET PAGE COUNT
             rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
-            rowData.RangeWidget = _pTableView->createRangeWidget();
+            rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
+            rowData.SwitchWidget = _pTableView->createSwitchWidget();
             // TODO: CALL C# TO SAVA PASSWORD ISHASIMAGE
             rowData.ExpandData = {};
         FOR_END
     }
-    else if (_pModuleType.MasterModuleType == MasterModule::Type::ImageAction
-        || qvariant_cast<WordToPDF::Type>(_pModuleType.SlaveModuleType) == WordToPDF::Type::ImageToPDF)
+    else if(_pModuleType.MasterModuleType == MasterModule::Type::PDFAction)
     {
         FOR_START
-            QImage image(filePath);
-            rowData.setImageSizeData({ .OriginalSize = image.size(), .ResizedSize = image.size() });
-            rowData.RangeWidget = _pTableView->createRangeWidget();
+            // TODO: CALL C# TO GET PAGE COUNT
+            rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 20}}, 20} });
+            rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
+            // TODO: CALL C# TO SAVA PASSWORD ISHASIMAGE
+            rowData.ExpandData = {};
         FOR_END
+    }
+    else if (_pModuleType.MasterModuleType == MasterModule::Type::ImageAction)
+    {
+        if(int imageType = _pModuleType.SlaveModuleType.toInt();
+            imageType == static_cast<int>(ImageAction::Type::ImageToPDF) || imageType == static_cast<int>(ImageAction::Type::ImageResize))
+        {
+            FOR_START
+                QImage image(filePath);
+                rowData.setImageSizeData({ .OriginalSize = image.size(), .ResizedSize = image.size() });
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
+            FOR_END
+        }
+        else
+        {
+            FOR_START
+                QImage image(filePath);
+                rowData.setImageSizeData({ .OriginalSize = image.size(), .ResizedSize = image.size() });
+            FOR_END
+        }
     }
     else {
         switch (_pModuleType.SlaveModuleType.toInt()) {
@@ -216,27 +206,34 @@ void PWCentralWidget::addFiles(const QStringList& filePaths)
             FOR_START
                 // TODO: CALL C# TO GET PAGE COUNT
                 rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 1}}, 1} });
-                rowData.RangeWidget = _pTableView->createRangeWidget();
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
             FOR_END
         }break;
         case static_cast<int>(WordToPDF::Type::ExcelToPDF): {
             FOR_START
                 // TODO: CALL C# TO GET PAGE COUNT
                 rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 1}}, 1} });
-                rowData.RangeWidget = _pTableView->createRangeWidget();
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
             FOR_END
         }break;
         case static_cast<int>(WordToPDF::Type::PowerpointToPDF): {
             FOR_START
                 // TODO: CALL C# TO GET PAGE COUNT
                 rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 1}}, 1} });
-                rowData.RangeWidget = _pTableView->createRangeWidget();
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
+            FOR_END
+        }break;
+        case static_cast<int>(WordToPDF::Type::ImageToPDF): {
+            FOR_START
+                QImage image(filePath);
+                rowData.setImageSizeData({ .OriginalSize = image.size(), .ResizedSize = image.size() });
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
             FOR_END
         }break;
         default: {
             FOR_START
                 rowData.setRangeData({ PWTableViewModel::RangeData{ {PWTableViewModel::RangeData::Range{1, 1}}, 1} });
-                rowData.RangeWidget = _pTableView->createRangeWidget();
+                rowData.RangeWidget = _pTableView->createLineEditRangeWidget();
             FOR_END
         }break;
         }

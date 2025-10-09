@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QDesktopServices>
+#include <QMimeData>
 #include <NXLineEdit.h>
 #include <magic_enum/magic_enum.hpp>
 #include "PWTableView.h"
@@ -92,6 +93,120 @@ int PWTableViewModel::columnCount(const QModelIndex& parent) const
 {
     Q_UNUSED(parent);
     return _pHeaderTextList.size();
+}
+
+Qt::ItemFlags PWTableViewModel::flags(const QModelIndex& index) const
+{
+    Qt::ItemFlags defaultFlags = QAbstractTableModel::flags(index);
+
+    if (index.isValid()) {
+        // 使项目可拖动、可放置、可选择、可启用
+        return defaultFlags | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+    }
+    else {
+        // 对于无效的索引（如表格空白区域），允许放置
+        return defaultFlags | Qt::ItemIsDropEnabled;
+    }
+}
+
+Qt::DropActions PWTableViewModel::supportedDropActions() const
+{
+    return Qt::MoveAction | Qt::CopyAction;
+}
+
+Qt::DropActions PWTableViewModel::supportedDragActions() const
+{
+    return Qt::MoveAction | Qt::CopyAction;
+}
+
+QStringList PWTableViewModel::mimeTypes() const
+{
+    return QStringList() << "application/x-pwtableviewmodel-row";
+}
+
+QMimeData* PWTableViewModel::mimeData(const QModelIndexList& indexes) const
+{
+    if (indexes.isEmpty()) return nullptr;
+    QMimeData* mimeData = new QMimeData;
+    QModelIndex index = indexes.first();
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream << index.row() << index.column();
+
+    mimeData->setData("application/x-pwtableviewmodel-row", data);
+    return mimeData;
+}
+
+bool PWTableViewModel::canDropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) const
+{
+    Q_UNUSED(column);
+    Q_UNUSED(parent);
+
+    if (!data->hasFormat("application/x-pwtableviewmodel-row") ||
+        action != Qt::MoveAction ||
+        row < 0 || row > _pRowDataList.size())
+        return false;
+
+    return true;
+}
+
+bool PWTableViewModel::dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent)
+{
+    if (action == Qt::IgnoreAction) return true;
+
+    QByteArray encodedData = data->data("application/x-pwtableviewmodel-row");
+    QDataStream stream(&encodedData, QIODevice::ReadOnly);
+    const int& targetRow = row;
+    int draggedRow, draggedColumn;
+    stream >> draggedRow >> draggedColumn;
+    int dropIndicatorPos = _pTableView->property("PWDropIndicatorPosition").toInt();
+
+    auto moveRowData = [this, draggedRow, column](int insertPos, int startMovePos, int endMovePos, bool moveForward) {
+        RowData draggedData = _pRowDataList[draggedRow];
+
+        if (moveForward) {
+            // 向前移动数据
+            for (int i = startMovePos; i < endMovePos; ++i) {
+                _pRowDataList[i] = _pRowDataList[i + 1];
+            }
+        }
+        else {
+            // 向后移动数据
+            for (int i = endMovePos; i > startMovePos; --i) {
+                _pRowDataList[i] = _pRowDataList[i - 1];
+            }
+        }
+
+        // 插入拖拽的数据
+        _pRowDataList[insertPos] = draggedData;
+
+        // 更新行数据和发送信号
+        int affectedStart = moveForward ? qMin(draggedRow, insertPos) : qMin(startMovePos, insertPos);
+        int affectedEnd = moveForward ? qMax(draggedRow, insertPos) : qMax(endMovePos, insertPos);
+
+        _updateMoveActionAllRowData(affectedStart, affectedEnd);
+        Q_EMIT dataChanged(index(affectedStart, 0), index(affectedEnd, columnCount() - 1));
+        };
+
+    // 处理不同的移动情况
+    if (targetRow < draggedRow) {
+        if (dropIndicatorPos == 1/*AboveItem*/) {
+            moveRowData(targetRow, targetRow, draggedRow, false);
+        }
+        else if (dropIndicatorPos == 2/*BelowItem*/) {
+            moveRowData(targetRow + 1, targetRow + 1, draggedRow, false);
+        }
+    }
+    else if (targetRow > draggedRow) {
+        if (dropIndicatorPos == 1/*AboveItem*/) {
+            moveRowData(targetRow - 1, draggedRow, targetRow - 1, true);
+        }
+        else if (dropIndicatorPos == 2/*BelowItem*/) {
+            moveRowData(targetRow, draggedRow, targetRow, true);
+        }
+    }
+
+    return true;
 }
 
 QVariant PWTableViewModel::data(const QModelIndex& index, int role) const
@@ -221,7 +336,6 @@ QVariant PWTableViewModel::headerData(int section, Qt::Orientation orientation, 
     }
     return QAbstractTableModel::headerData(section, orientation, role);
 }
-
 
 bool PWTableViewModel::setHeaderData(int section, Qt::Orientation orientation, const QVariant& value, int role)
 {
@@ -782,6 +896,34 @@ void PWTableViewModel::onSortByRangeOrSizeActionTriggered(bool descending)
     _performSort(compareFunc);
 }
 
+void PWTableViewModel::onSwapRows(int row1, int row2)
+{
+    if (row1 < 0 || row1 >= _pRowDataList.size() || row2 < 0 || row2 >= _pRowDataList.size()) return;
+    std::swap(_pRowDataList[row1], _pRowDataList[row2]);
+    if (_isEightColumnTable()) {
+        QModelIndex newIndex2 = createIndex(row1, 4);
+        _pRowDataList[row2].SwitchWidget.value()->setIndex(newIndex2);
+        _pTableView->setIndexWidget(newIndex2, _pRowDataList[row2].SwitchWidget.value());
+
+        QModelIndex newIndex1 = createIndex(row2, 4);
+        _pRowDataList[row1].SwitchWidget.value()->setIndex(newIndex1);
+        _pTableView->setIndexWidget(newIndex1, _pRowDataList[row1].SwitchWidget.value());
+    }
+    if (!property("IsGridViewMode").toBool()) {
+        QModelIndex newIndex1 = createIndex(row1, 3);
+        _pRowDataList[row2].RangeWidget->setIndex(newIndex1);
+        _pTableView->setIndexWidget(newIndex1, _pRowDataList[row2].RangeWidget);
+
+        QModelIndex newIndex2 = createIndex(row2, 3);
+        _pRowDataList[row1].RangeWidget->setIndex(newIndex2);
+        _pTableView->setIndexWidget(newIndex2, _pRowDataList[row1].RangeWidget);
+    }
+
+    QModelIndex topLeft = createIndex(row1, 0);
+    QModelIndex bottomRight = createIndex(row2, columnCount() - 1);
+    Q_EMIT dataChanged(topLeft, bottomRight);
+}
+
 QVariant PWTableViewModel::_formatRowData(const RowData& rowData, int column) const
 {
     const QString& headerText = _pHeaderTextList.at(column);
@@ -892,22 +1034,87 @@ void PWTableViewModel::_updateResetActionAllRowData()
         RowData& rowData = _pRowDataList[row];
         rowData.Index = row;
         if(rowData.Checked) ++_pCheckedRowCount;
-        NXModelIndexWidget* rangeWidget = _pTableView->createRangeWidget();
+        NXModelIndexWidget* rangeWidget = _pTableView->createLineEditRangeWidget();
+        if (!rangeWidget) continue;
+
         QList<NXLineEdit*> lineEdits = rangeWidget->findChildren<NXLineEdit*>("NXLineEdit");
-        if (lineEdits.size() != 2) throw std::runtime_error("Cannot find NXLineEdit in RangeWidget");
-        if (rowData.isRange()) {
-            const auto& range = std::get<RangeData>(rowData.SecondColumn);
-            QSignalBlocker blocker1(lineEdits.front());
-            QSignalBlocker blocker2(lineEdits.back());
-            lineEdits.front()->setText(QString::number(range.RangeList.front().Start));
-            lineEdits.back() ->setText(QString::number(range.RangeList.front().End));
+        if (lineEdits.size() == 1) {
+            QSignalBlocker blocker(lineEdits.front());
+            QString text;
+            const auto& rangeList = std::get<RangeData>(rowData.SecondColumn).RangeList;
+            text.reserve(rangeList.size() * 3);
+            for (const auto& range : rangeList) {
+                if (range.Start == range.End) text.append(QString::number(range.Start));
+                else text.append(QString("%1-%2").arg(range.Start).arg(range.End));
+                text.append(QChar(0x3001));
+            }
+            text.chop(1);
+            lineEdits.front()->setText(text);
         }
         else {
-            QSignalBlocker blocker1(lineEdits[0]);
-            QSignalBlocker blocker2(lineEdits[1]);
-            const auto& size = std::get<ImageSizeData>(rowData.SecondColumn);
-            lineEdits.front()->setText(QString::number(size.ResizedSize.width()));
-            lineEdits.back() ->setText(QString::number(size.ResizedSize.height()));
+            if (rowData.isRange()) {
+                const auto& range = std::get<RangeData>(rowData.SecondColumn);
+                QSignalBlocker blocker1(lineEdits.front());
+                QSignalBlocker blocker2(lineEdits.back());
+                lineEdits.front()->setText(QString::number(range.RangeList.front().Start));
+                lineEdits.back()->setText(QString::number(range.RangeList.front().End));
+            }
+            else {
+                QSignalBlocker blocker1(lineEdits[0]);
+                QSignalBlocker blocker2(lineEdits[1]);
+                const auto& size = std::get<ImageSizeData>(rowData.SecondColumn);
+                lineEdits.front()->setText(QString::number(size.ResizedSize.width()));
+                lineEdits.back()->setText(QString::number(size.ResizedSize.height()));
+            }
+        }
+        QModelIndex rangeIndex = createIndex(row, 3);
+        _pTableView->setIndexWidget(rangeIndex, rangeWidget);
+        if (_isEightColumnTable()) {
+            NXModelIndexWidget* switchWidget = _pTableView->createSwitchWidget();
+            QModelIndex switchIndex = createIndex(row, 4);
+            _pTableView->setIndexWidget(switchIndex, switchWidget);
+        }
+    }
+}
+
+void PWTableViewModel::_updateMoveActionAllRowData(int fromRow, int toRow)
+{
+    for (int row = fromRow; row <= toRow; ++row) {
+        RowData& rowData = _pRowDataList[row];
+        rowData.Index = row;
+        NXModelIndexWidget* rangeWidget = _pTableView->createLineEditRangeWidget();
+        if (!rangeWidget) continue;
+
+        QList<NXLineEdit*> lineEdits = rangeWidget->findChildren<NXLineEdit*>("NXLineEdit");
+        if (lineEdits.size() == 1) {
+            QSignalBlocker blocker(lineEdits.front());
+            QString text;
+            const auto& rangeList = std::get<RangeData>(rowData.SecondColumn).RangeList;
+            text.reserve(rangeList.size() * 3);
+            for (const auto& range : rangeList) {
+                if(range.Start == range.End) text.append(QString::number(range.Start));
+                else text.append(QString("%1-%2").arg(range.Start).arg(range.End));
+                text.append(QChar(0x3001));
+            }
+            text.chop(1);
+            lineEdits.front()->setText(text);
+            lineEdits.front()->setProperty("FullRangeText", text);
+        }
+        else {
+            if (rowData.isRange()) {
+                const auto& range = std::get<RangeData>(rowData.SecondColumn);
+                QSignalBlocker blocker1(lineEdits.front());
+                QSignalBlocker blocker2(lineEdits.back());
+                lineEdits.front()->setText(QString::number(range.RangeList.front().Start));
+                lineEdits.back()->setText(QString::number(range.RangeList.front().End));
+            }
+            else {
+                QSignalBlocker blocker1(lineEdits[0]);
+                QSignalBlocker blocker2(lineEdits[1]);
+                const auto& size = std::get<ImageSizeData>(rowData.SecondColumn);
+                lineEdits.front()->setText(QString::number(size.ResizedSize.width()));
+                lineEdits.back()->setText(QString::number(size.ResizedSize.height()));
+            }
         }
         QModelIndex rangeIndex = createIndex(row, 3);
         _pTableView->setIndexWidget(rangeIndex, rangeWidget);

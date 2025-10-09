@@ -3,11 +3,12 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QLabel>
+#include <QMimeData>
 #include <QHBoxLayout>
 #include <NXLineEdit.h>
 #include <NXMenu.h>
 #include <NXToggleSwitch.h>
-
+#include <NXTheme.h>
 #include "PWHeaderView.h"
 #include "PWTableViewModel.h"
 #include "PWTableViewIconDelegate.h"
@@ -30,12 +31,143 @@ namespace Scope::Utils {
         lineEdit->setValidator(new QRegularExpressionValidator(regexPage, lineEdit));
         return lineEdit;
     }
+    static std::vector<std::array<int, 2>> MergeIntervals(std::vector<std::array<int, 2>>& intervals) {
+        if (intervals.size() <= 1) return intervals;
+
+        auto compare = [](const auto& v1, const auto& v2) { return v1.front() < v2.front(); };
+        std::sort(intervals.begin(), intervals.end(), compare);
+
+        std::vector<std::array<int, 2>> res;
+        res.reserve(intervals.size());
+
+        auto prev = intervals.begin(), next = intervals.begin() + 1;
+        for (; next != intervals.end(); ++prev, ++next) {
+            if ((*prev).back() < (*next).front()) {
+                res.push_back(*prev);
+            }
+            else if ((*prev).back() > (*next).back()) {
+                (*next).front() = (*prev).front();
+                (*next).back() = (*prev).back();
+            }
+            else if ((*prev).back() >= (*next).front()) {
+                (*next).front() = (*prev).front();
+            }
+        }
+        res.push_back(*prev);
+
+        return res;
+    }
+    
+    static auto ValidateNumberRangeFunc(const QString& text, int totalPage) -> bool {// 验证数字范围是否有效S
+        QString trimmed = text.trimmed();
+        if (trimmed.isEmpty()) return false;
+
+        bool hasMultipleDash = trimmed.count('-') > 1;
+        bool startsWithDash = trimmed.startsWith('-');
+        bool endsWithDash = trimmed.endsWith('-');
+        if (hasMultipleDash || startsWithDash || endsWithDash) return false;
+
+        if (trimmed.contains('-')) {
+            QStringList nums = trimmed.split('-');
+            if (nums.size() != 2) return false;
+
+            bool ok1, ok2;
+            int start = nums[0].toInt(&ok1);
+            int end = nums[1].toInt(&ok2);
+
+            return ok1 && ok2 && start <= end && start <= totalPage && end <= totalPage;
+        }
+        else {
+            bool ok;
+            int num = trimmed.toInt(&ok);
+            return ok && num <= totalPage;
+        }
+    };
+
+    static auto ProcessPdfActionFormatFunc(auto& rowDataRange, const QStringList& parts, int totalPage) -> QString {
+        std::vector<std::array<int, 2>> validParts;
+        validParts.reserve(parts.size());
+
+        for (const QString& part : parts) {
+            if (!ValidateNumberRangeFunc(part, totalPage)) continue;
+
+            QString trimmed = part.trimmed();
+            if (trimmed.contains('-')) {
+                QStringList nums = trimmed.split('-');
+                int start = nums[0].toInt();
+                int end = nums[1].toInt();
+                validParts.push_back({ start, end });
+            }
+            else {
+                int num = trimmed.toInt();
+                validParts.push_back({ num, num });
+            }
+        }
+
+        if (validParts.empty()) return QString();
+
+        std::vector<std::array<int, 2>> intervals = Scope::Utils::MergeIntervals(validParts);
+        QStringList mergedParts;
+        mergedParts.reserve(intervals.size());
+
+        for (const auto& interval : intervals) {
+            if (interval[0] == interval[1]) {
+                rowDataRange.append({.Start = interval[0],.End = interval[0] });
+                mergedParts.append(QString::number(interval[0]));
+            }
+            else {
+                rowDataRange.append({.Start = interval[0],.End = interval[1] });
+                mergedParts.append(QString("%1-%2").arg(interval[0]).arg(interval[1]));
+            }
+        }
+
+        return mergedParts.join(QChar(0x3001));
+    };
+
+
+    
+    static auto ProcessPdfActionNoMergeFormatFunc(auto& rowDataRange, const QStringList& parts, int totalPage) -> QString {
+        QSet<QString> validParts;
+        validParts.reserve(parts.size());
+
+        for (const QString& part : parts) {
+            if (!ValidateNumberRangeFunc(part, totalPage)) continue;
+
+            QString trimmed = part.trimmed();
+            if (trimmed.contains('-')) {
+                QStringList nums = trimmed.split('-');
+                int start = nums[0].toInt();
+                int end = nums[1].toInt();
+                validParts << QString("%1-%2").arg(start).arg(end);
+            }
+            else {
+                validParts << trimmed;
+            }
+        }
+
+        if (validParts.empty()) return QString();
+        QString result;
+        result.reserve(validParts.size() * 2);
+        for (auto it = validParts.begin(); it!= validParts.end(); ++it) {
+            if ((*it).size() == 1) {
+                rowDataRange.append({.Start = (*it).toInt(),.End = (*it).toInt() });
+            }
+            else {
+                rowDataRange.append({ .Start = (*it)[0].digitValue(),.End = (*it)[2].digitValue() });
+            }
+            result.append(*it);
+            result.append(QChar(0x3001));
+        }
+        result.chop(1);
+        return result;
+    };
+
 }
+QColor gIndicatorColor = NXThemeColor(nxTheme->getThemeMode(), PrimaryNormal);
+
 using namespace WizConverter::Enums;
 PWTableView::PWTableView(QWidget* parent)
     : NXTableView(parent)
-    , _pGridRowsPerPage{ 2 }
-    , _pItemsPerRow{ 4 }
 {
     _pHeaderView = new PWHeaderView(Qt::Horizontal, this);
     _pModel = new PWTableViewModel(this);
@@ -44,6 +176,10 @@ PWTableView::PWTableView(QWidget* parent)
     setAlternatingRowColors(true);
     setIconSize(TABLE_VIEW_CHECKICON_SIZE);
     setSelectionBehavior(QAbstractItemView::SelectRows);
+    setAcceptDrops(true);
+    setDropIndicatorShown(true);
+    setDragEnabled(true);
+    setDragDropMode(QAbstractItemView::InternalMove);
     setModel(_pModel);
     setHorizontalHeader(_pHeaderView);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -57,9 +193,9 @@ PWTableView::PWTableView(QWidget* parent)
 
     QObject::connect(this, &NXTableView::tableViewShow, this,  &PWTableView::_onTableViewShow, Qt::SingleShotConnection);
     QObject::connect(this, &PWTableView::checkIconClicked, _pModel,  &PWTableViewModel::onSelectSingleRow);
+    QObject::connect(this, &PWTableView::swapRows, _pModel, &PWTableViewModel::onSwapRows);
     QObject::connect(_pHeaderView, &PWHeaderView::selectAllRows, _pModel, &PWTableViewModel::onSelectAllRows);
     QObject::connect(_pHeaderView, &PWHeaderView::removeSelectedRows, _pModel, &PWTableViewModel::onRemoveSelectedRows);
-
 }
 
 PWTableView::~PWTableView()
@@ -81,7 +217,6 @@ void PWTableView::setModuleType(WizConverter::Enums::ModuleType moduleType)
 
             QObject::connect(toggleSwitchButton, &NXToggleSwitch::toggled, this,
                 [toggleSwitchButton, this](bool checked) {
-                Q_EMIT hideModelIndexWidget(checked);
                 _pModel->setProperty("IsGridViewMode", checked);
                 if (_pModel->property("IsGridViewMode").toBool()) {
                     _pModel->resetRemoveIndexWidgits();
@@ -93,7 +228,7 @@ void PWTableView::setModuleType(WizConverter::Enums::ModuleType moduleType)
                     setDragEnabled(true);
                     setDragDropMode(QAbstractItemView::InternalMove);
                     setSelectionBehavior(QAbstractItemView::SelectItems);
-                    setSelectionMode(QAbstractItemView::MultiSelection);
+                    //setSelectionMode(QAbstractItemView::MultiSelection);
                     verticalHeader()->setDefaultSectionSize(145);
                     setHeaderTextList({ "","","","" });
                     _pModel->layoutChanged();
@@ -126,22 +261,17 @@ void PWTableView::setModuleType(WizConverter::Enums::ModuleType moduleType)
                     }
                     setItemDelegateForColumn(_pColumnWidthList.size() - 2, _pIconDelegate);
                     setItemDelegateForColumn(_pColumnWidthList.size() - 1, _pIconDelegate);
-                    
+                    setSelection(visualRectForRow(currentIndex().row() * 4 + currentIndex().column()), QItemSelectionModel::SelectCurrent);
                 }
                 toggleSwitchButton->setToolTip(checked ? "切换到列表视图" : "切换到网格视图");
-                static std::once_flag hideModelIndexWidgetFlag;
-                std::call_once(hideModelIndexWidgetFlag, [this]() {
+                static std::once_flag resetFlag;
+                std::call_once(resetFlag, [this]() {
                     QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, this, [this]() {
                         if(_pModel->property("IsGridViewMode").toBool())
                             _pModel->resetRemoveIndexWidgits();
                         this->_updateGridViewScrollBar();
                         });
                     QObject::connect(_pModel, &QAbstractItemModel::rowsRemoved, this, &PWTableView::_updateGridViewScrollBar);
-                    //QObject::connect(_pModel, &QAbstractItemModel::modelReset, this, &PWTableView::_updateGridViewScrollBar);
-                    //QObject::connect(_pModel, &QAbstractItemModel::layoutChanged, this, &PWTableView::_updateGridViewScrollBar);
-                    /*QObject::connect(_pModel, &QAbstractItemModel::rowsInserted, [this]() {
-                        Q_EMIT hideModelIndexWidget(true);
-                        });*/
                     });
                 });
             });
@@ -169,7 +299,29 @@ void PWTableView::setColumnWidthList(const QList<int>& columnWidthList)
     _pColumnWidthList = columnWidthList;
 }
 
-NXModelIndexWidget* PWTableView::createRangeWidget()
+NXModelIndexWidget* PWTableView::createLineEditRangeWidget()
+{
+    if (_pModuleType.MasterModuleType == MasterModule::Type::PDFAction) {
+        if (const auto& pdfType = qvariant_cast<PDFAction::Type>(_pModuleType.SlaveModuleType);
+            pdfType == PDFAction::Type::PDFCompress || pdfType == PDFAction::Type::PDFCrypto)
+        {
+            return nullptr;
+        }
+        return createOneLineEditRangeWidget();
+    }
+    if (_pModuleType.MasterModuleType == MasterModule::Type::ImageAction)
+    {
+        if (const auto& imageType = qvariant_cast<ImageAction::Type>(_pModuleType.SlaveModuleType);
+            !(imageType == ImageAction::Type::PDFToImage || imageType == ImageAction::Type::ImageToPDF
+                || imageType == ImageAction::Type::ImageResize))
+        {
+            return nullptr;
+        }
+    }
+    return createTwoLineEditRangeWidget();
+}
+
+NXModelIndexWidget* PWTableView::createTwoLineEditRangeWidget()
 {
     QPointer<NXModelIndexWidget> modelIndexWidget = new NXModelIndexWidget(this);
     QPointer<QHBoxLayout> modelIndexLayout = new QHBoxLayout(modelIndexWidget);
@@ -314,21 +466,127 @@ NXModelIndexWidget* PWTableView::createRangeWidget()
         }
         else if (rowData.isSize()) {
             const auto& size = std::get<PWTableViewModel::ImageSizeData>(rowData.SecondColumn);
-            leftLineEdit->setText(QString::number(size.OriginalSize.width()));
-            rightLineEdit->setText(QString::number(size.OriginalSize.height()));
+            leftLineEdit->setText(QString::number(size.ResizedSize.width()));
+            rightLineEdit->setText(QString::number(size.ResizedSize.height()));
         }
         });
-    
-    /*QObject::connect(this, &PWTableView::hideModelIndexWidget, modelIndexWidget, [modelIndexWidget](bool hide) {
-        for (const auto& child : modelIndexWidget->children()) {
-            if (auto* widget = qobject_cast<QWidget*>(child)) {
-                widget->setVisible(!hide);
-            }
-        }
-        modelIndexWidget->setVisible(!hide);
-        });*/
     return modelIndexWidget;
 }
+
+NXModelIndexWidget* PWTableView::createOneLineEditRangeWidget()
+{
+    static QRegularExpression regexPattern("^["
+        "0-9 "                               // 数字和空格
+        ",，;；、.。!！?？"                  // 中英标点
+        "‘’'\"<>《》〈〉【】『』「」"        // 引号和括号
+        "|"                                  // 竖线
+        "+\\-*/"                             // 运算符
+        "\\\\"                               // 反斜线
+        "]*$");
+    static QRegularExpression splitPattern(R"([\s,，;；、.。!！?？‘’'""<>《》〈〉【】『』「」|+*/\\])");
+    static QRegularExpression dashRegex("\\s*-+\\s*");
+
+    QPointer<NXModelIndexWidget> modelIndexWidget = new NXModelIndexWidget(this);
+    QPointer<QHBoxLayout> modelIndexLayout = new QHBoxLayout(modelIndexWidget);
+    modelIndexLayout->setContentsMargins(0, 0, 0, 0);
+    modelIndexLayout->setSpacing(0);
+    modelIndexLayout->setAlignment(Qt::AlignCenter);
+
+    QPointer<NXLineEdit> pageRangeLineEdit = new NXLineEdit(this);
+    pageRangeLineEdit->setPlaceholderText("示例：1-3,4、5-6");
+    pageRangeLineEdit->setIsClearButtonEnabled(true);
+    pageRangeLineEdit->setFixedSize(145, 24);
+    pageRangeLineEdit->setBorderRadius(0);
+    pageRangeLineEdit->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    pageRangeLineEdit->setAlignment(Qt::AlignLeft);
+    pageRangeLineEdit->setValidator(new QRegularExpressionValidator(regexPattern, pageRangeLineEdit));
+
+    modelIndexLayout->addStretch();
+    modelIndexLayout->addWidget(pageRangeLineEdit);
+    modelIndexLayout->addStretch();
+
+    QObject::connect(pageRangeLineEdit, &NXLineEdit::focusIn, modelIndexWidget, [pageRangeLineEdit](const QString& text) {
+        if (text.isEmpty()) return;
+        const QString& fullText = pageRangeLineEdit->property("FullRangeText").toString();
+        pageRangeLineEdit->blockSignals(true);
+        pageRangeLineEdit->setText(fullText);
+        pageRangeLineEdit->blockSignals(false);
+    });
+    QObject::connect(pageRangeLineEdit, &NXLineEdit::editingFinished, modelIndexWidget, [this, pageRangeLineEdit]() {
+        const QModelIndex& index = this->indexAt(viewport()->mapToParent(pageRangeLineEdit->parentWidget()->pos()));
+        if (!index.isValid()) return;
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        auto& range = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn);
+        QString processedText = pageRangeLineEdit->text().trimmed();
+        if (processedText.isEmpty()) {
+            range.RangeList.clear();
+            range.RangeList.emplace_back(1, 1);
+            pageRangeLineEdit->setProperty("FullRangeText", 1);
+            pageRangeLineEdit->setToolTip("");
+            pageRangeLineEdit->blockSignals(true);
+            pageRangeLineEdit->setText("1");
+            pageRangeLineEdit->blockSignals(false);
+            return;
+        } 
+        if (processedText == pageRangeLineEdit->property("FullRangeText").toString()) {
+            QFontMetrics metrics(pageRangeLineEdit->font());
+            pageRangeLineEdit->blockSignals(true);
+            pageRangeLineEdit->setText(metrics.elidedText(processedText, Qt::ElideRight, 120));
+            pageRangeLineEdit->blockSignals(false);
+            return;
+        }
+        const int& totalPage = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn).Max;
+
+        processedText.replace(dashRegex, "-");
+        const QStringList& parts = processedText.split(splitPattern, Qt::SkipEmptyParts);
+        const auto& pdfActionType = qvariant_cast<PDFAction::Type>(_pModuleType.SlaveModuleType);
+
+        QString formatted;
+        range.RangeList.clear();
+        if (pdfActionType == PDFAction::Type::PDFSplit
+            || pdfActionType == PDFAction::Type::PDFMerge
+            || pdfActionType == PDFAction::Type::PDFPageRenderAsImage
+            || pdfActionType == PDFAction::Type::PDFPageDelete
+            || pdfActionType == PDFAction::Type::PDFWatermark
+            || pdfActionType == PDFAction::Type::DocumentTranslate) {
+            formatted = Scope::Utils::ProcessPdfActionFormatFunc(range.RangeList, parts, totalPage);
+        }
+        else {
+            formatted = Scope::Utils::ProcessPdfActionNoMergeFormatFunc(range.RangeList, parts, totalPage);
+        }
+
+        if (formatted.isEmpty()) {
+            range.RangeList.emplace_back(1, 1);
+            pageRangeLineEdit->setProperty("FullRangeText", 1);
+            pageRangeLineEdit->setToolTip("");
+            pageRangeLineEdit->blockSignals(true);
+            pageRangeLineEdit->setText("1");
+            pageRangeLineEdit->blockSignals(false);
+            return;
+        }
+
+        QFontMetrics metrics(pageRangeLineEdit->font());
+        pageRangeLineEdit->setProperty("FullRangeText", formatted);
+        pageRangeLineEdit->setToolTip(formatted);
+        formatted = metrics.elidedText(formatted, Qt::ElideRight, 120);
+        pageRangeLineEdit->blockSignals(true);
+        pageRangeLineEdit->setText(formatted);
+        pageRangeLineEdit->blockSignals(false);
+    });
+    QObject::connect(modelIndexWidget, &NXModelIndexWidget::indexChanged, this, [this, pageRangeLineEdit](const QModelIndex& index) {
+        if (!index.isValid()) return;
+        PWTableViewModel::RowData& rowData = _pModel->getRowData(index.row());
+        auto& range = std::get<PWTableViewModel::RangeData>(rowData.SecondColumn);
+        range.RangeList.front().End = 1;
+        pageRangeLineEdit->blockSignals(true);
+        pageRangeLineEdit->setText(QString::number(range.RangeList.front().Start));
+        pageRangeLineEdit->blockSignals(false);
+        pageRangeLineEdit->setProperty("FullRangeText", range.RangeList.front().Start);
+    });
+
+    return modelIndexWidget;
+}
+
 NXModelIndexWidget* PWTableView::createSwitchWidget()
 {
     QPointer<NXModelIndexWidget> modelIndexWidget = new NXModelIndexWidget(this);
@@ -349,12 +607,55 @@ NXModelIndexWidget* PWTableView::createSwitchWidget()
     return modelIndexWidget;
 }
 
+QRect PWTableView::visualRectForRow(int row) const
+{
+    QRect rowRect;
+    for (int col = 0; col < model()->columnCount(); ++col) {
+        if (!isColumnHidden(col)) {
+            QModelIndex index = model()->index(row, col);
+            QRect rect = visualRect(index);
+            if (rect.isValid()) {
+                rowRect = rowRect.isNull() ? rect : rowRect.united(rect);
+            }
+        }
+    }
+    return rowRect;
+}
+
 void PWTableView::paintEvent(QPaintEvent* event)
 {
+    NXTableView::paintEvent(event);
+    const QModelIndex& targetIndex = property("PWTargetIndex").value<QModelIndex>();
+    if (!targetIndex.isValid()) return;
+    QStyleOptionViewItem option;
+    option.initFrom(this);
+    option.rect = visualRectForRow(targetIndex.row());
+
     QPainter painter(viewport());
     painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing | QPainter::SmoothPixmapTransform);
+    painter.setPen(QPen(gIndicatorColor, 2));
 
-    NXTableView::paintEvent(event);
+    switch (property("PWDropIndicatorPosition").value<DropIndicatorPosition>()) {
+    case QAbstractItemView::AboveItem: {
+        int startY = option.rect.top() + 1;
+        int startX = option.rect.left() + 6;
+        painter.drawEllipse(QPoint(startX, startY), 4, 4);
+        painter.drawLine(QPoint(startX, startY), QPoint(option.rect.width() + 6, startY));
+        break;
+    }
+    case QAbstractItemView::BelowItem: {
+        int startY = option.rect.bottom();
+        int startX = option.rect.left() + 6;
+        painter.drawEllipse(QPoint(startX, startY), 4, 4);
+        painter.drawLine(QPoint(startX, startY), QPoint(option.rect.width() + 6, startY));
+        break;
+    }
+    case QAbstractItemView::OnItem: {
+        painter.drawRect(option.rect.adjusted(1, 1, -1, -1));
+        break;
+    }
+    default: break;
+    }
 }
 
 void PWTableView::mouseReleaseEvent(QMouseEvent* event)
@@ -473,12 +774,116 @@ void PWTableView::contextMenuEvent(QContextMenuEvent* event)
 void PWTableView::resizeEvent(QResizeEvent* event)
 {
     NXTableView::resizeEvent(event);
-    /*
+}
+
+void PWTableView::dragEnterEvent(QDragEnterEvent* event)
+{
+    event->setAccepted(event->mimeData()->hasFormat("application/x-pwtableviewmodel-row"));
+}
+
+void PWTableView::dragMoveEvent(QDragMoveEvent* event)
+{
+    if (!event->mimeData()->hasFormat("application/x-pwtableviewmodel-row")) {
+        event->ignore();
+        return;
+    }
+    QByteArray encodedData = event->mimeData()->data("application/x-pwtableviewmodel-row");
+    QDataStream stream(&encodedData, QIODevice::ReadOnly);
+    int draggedRow, draggedColumn;
+    stream >> draggedRow >> draggedColumn;
     if (_pModel->property("IsGridViewMode").toBool()) {
-        // 重新计算每页显示行数并更新滚动条
-        _pGridRowsPerPage = _calculateGridRowsPerPage();
-        _updateGridViewScrollBar();
-    }*/
+        event->accept();
+        return;
+    }
+    const QModelIndex& targetIndex = indexAt(event->position().toPoint());
+    const QModelIndex& draggedIndex = _pModel->index(draggedRow, draggedColumn);
+    DropIndicatorPosition dropindicationPos = dropIndicatorPositionOverride();
+    setProperty("PWTargetIndex", targetIndex);
+    setProperty("PWDraggedIndex", draggedIndex);
+    setProperty("PWDropIndicatorPosition", dropindicationPos);
+    const QModelIndex& draggedPreviousIndex = _pModel->index(draggedIndex.row() - 1, draggedColumn);
+    const QModelIndex& draggedNextIndex = _pModel->index(draggedIndex.row() + 1, draggedColumn);
+
+    if (targetIndex.row() == draggedIndex.row() || 
+        (draggedNextIndex.isValid() && draggedNextIndex.row() == targetIndex.row() && dropindicationPos == QAbstractItemView::AboveItem) ||
+        (draggedPreviousIndex.isValid() && draggedPreviousIndex.row() == targetIndex.row() && dropindicationPos == QAbstractItemView::BelowItem))
+    {
+        gIndicatorColor = NXThemeColor(nxTheme->getThemeMode(), BasicText);
+    }
+    else {
+        if (dropindicationPos == QAbstractItemView::OnItem) {
+            gIndicatorColor = nxTheme->getThemeMode() == NXThemeType::ThemeMode::Light
+                ? QColor(0x7D, 0x52, 0x84)
+                : QColor(0x66, 0x3D, 0x74);
+        }
+        else {
+            gIndicatorColor = NXThemeColor(nxTheme->getThemeMode(), PrimaryNormal);
+        }
+    }
+
+    viewport()->update();
+    event->accept();
+}
+
+void PWTableView::dropEvent(QDropEvent* event)
+{
+    if (_pModel->property("IsGridViewMode").toBool()) {
+        QByteArray encodedData = event->mimeData()->data("application/x-pwtableviewmodel-row");
+        QDataStream stream(&encodedData, QIODevice::ReadOnly);
+        int draggedRow, draggedColumn;
+        stream >> draggedRow >> draggedColumn;
+        const QModelIndex& targetIndex = indexAt(event->position().toPoint());
+        Q_EMIT swapRows(draggedRow * 4 + draggedColumn, targetIndex.row() * 4 + targetIndex.column());
+        event->acceptProposedAction();
+        return;
+    }
+    QModelIndex targetIndex = property("PWTargetIndex").value<QModelIndex>();
+    QModelIndex draggedIndex = property("PWDraggedIndex").value<QModelIndex>();
+    QAbstractItemView::DropIndicatorPosition dropindicationPos = property("PWDropIndicatorPosition").value<DropIndicatorPosition>();
+    const QModelIndex& draggedPreviousIndex = _pModel->index(draggedIndex.row() - 1, 0);
+    const QModelIndex& draggedNextIndex = _pModel->index(draggedIndex.row() + 1, 0);
+    setProperty("PWTargetIndex", QModelIndex());
+    setProperty("PWDraggedIndex", QModelIndex());
+    if (targetIndex.row() == draggedIndex.row() ||
+        (draggedNextIndex.isValid() && draggedNextIndex.row() == targetIndex.row() && dropindicationPos == QAbstractItemView::AboveItem) ||
+        (draggedPreviousIndex.isValid() && draggedPreviousIndex.row() == targetIndex.row() && dropindicationPos == QAbstractItemView::BelowItem))
+    {
+        event->ignore();
+    }
+    else {
+        if (dropindicationPos == QAbstractItemView::OnItem) {
+            Q_EMIT swapRows(draggedIndex.row(), targetIndex.row());
+            event->acceptProposedAction();
+        }
+        else {
+            if (!_pModel->canDropMimeData(event->mimeData(), Qt::MoveAction, targetIndex.row(), 0, rootIndex())) {
+                event->ignore(); return;
+            }
+            _pModel->dropMimeData(event->mimeData(), Qt::MoveAction, targetIndex.row(), 0, rootIndex());
+            event->acceptProposedAction();
+        }
+    }
+    setProperty("PWDropIndicatorPosition", QAbstractItemView::OnViewport);
+}
+
+QAbstractItemView::DropIndicatorPosition PWTableView::dropIndicatorPositionOverride() const
+{
+    const QModelIndex& targetIndex = property("PWTargetIndex").value<QModelIndex>();
+    if (!targetIndex.isValid()) {
+        return QAbstractItemView::OnViewport;
+    }
+
+    const QRect& itemRect = visualRect(targetIndex);
+    const QPoint& cursorPos = mapFromGlobal(QCursor::pos() - QPoint(0, 45));
+    if (cursorPos.y() - 4 < itemRect.top()) {
+        return QAbstractItemView::AboveItem;
+    }
+    else if (cursorPos.y() + 12 > itemRect.bottom()) {
+        return QAbstractItemView::BelowItem;
+    }
+    else {
+        return QAbstractItemView::OnItem;
+    }
 }
 
 void PWTableView::_onTableViewShow()
@@ -496,48 +901,12 @@ void PWTableView::_onTableViewShow()
 
 void PWTableView::_updateGridViewScrollBar()
 {
-    if (!_pModel->property("IsGridViewMode").toBool()) {
-        // 非网格模式，恢复默认滚动条逻辑
-        //verticalScrollBar()->setRange(0, 1); // 让QTableView自动管理
-        //verticalScrollBar()->setRange(0, 10);
-
-        return;
-    }
-
-    int totalRows = _calculateGridTotalRows();
-    if (totalRows <= _pGridRowsPerPage) {
+    int totalRows = std::ceil(_pModel->rowCount() / 4.0);
+    if (totalRows <= 2) {
         verticalScrollBar()->setMaximum(145);
     }
     else {
-        int scrollableRows = totalRows - _pGridRowsPerPage;
+        int scrollableRows = totalRows - 2;
         verticalScrollBar()->setMaximum(scrollableRows * 145);
     }
 }
-
-int PWTableView::_calculateGridRowsPerPage() const
-{
-    if (!_pModel->property("IsGridViewMode").toBool()) {
-        return 0;
-    }
-
-    int viewportHeight = viewport()->height();
-    int rowHeight = verticalHeader()->defaultSectionSize();
-
-    if (rowHeight <= 0) {
-        return _pGridRowsPerPage; // 使用默认值
-    }
-
-    return viewportHeight / rowHeight;
-}
-
-int PWTableView::_calculateGridTotalRows() const
-{
-    if (!_pModel->property("IsGridViewMode").toBool()) {
-        return _pModel->rowCount();
-    }
-
-    int totalItems = _pModel->rowCount();
-    // 计算总行数：ceil(totalItems / itemsPerRow)
-    return (totalItems + _pItemsPerRow - 1) / _pItemsPerRow;
-}
-
